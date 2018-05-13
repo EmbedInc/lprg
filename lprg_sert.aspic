@@ -1,0 +1,229 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Low level interface for serially transferring data to and from the
+;   target.
+;
+;   Both the target chip clock and data lines are initialized to high
+;   impedence on power up.  Whenever the serial interface is used,
+;   the clock line will be left driven low and the data line in high
+;   impedence state when done.
+;
+/include "lprg.ins.aspic"
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+tmin     equ     300         ;nS minimum any changes either side of falling clock
+compns   equ     0           ;comparator settling time (no comparator this implementation)
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+.sert    code
+;
+;*******************************************************************************
+;
+;   Macro PGC_LOW cy
+;
+;   Cause the target PGC line to be driven low.  CY is the minimum number of
+;   instruction cycles since the last change to the output lines.
+;
+pgc_low  macro   cy
+         waitns  tmin, (cy)
+         set_tpgc_off
+         dbankif tpgc_tris
+         bcf     tpgc_tris, tpgc_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro PGC_HIGH cy
+;
+;   Cause the target PGC line to be driven high.  CY is the minimum number of
+;   instruction cycles since the last change to the output lines.
+;
+pgc_high macro   cy
+         waitns  tmin, (cy)
+         set_tpgc_on
+         dbankif tpgc_tris
+         bcf     tpgc_tris, tpgc_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro PGC_OFF cy
+;
+;   Set the PGC line to high impedence.  CY is the minimum number of instruction
+;   cycles since the last change to the output lines.
+;
+pgc_off  macro   cy
+         waitns  tmin, (cy)
+         dbankif tpgc_tris
+         bsf     tpgc_tris, tpgc_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro PGD_LOW cy
+;
+;   Cause the target PGD line to be driven low.  CY is the minimum number of
+;   instruction cycles since the last change to the output lines.
+;
+pgd_low  macro   cy
+         waitns  tmin, (cy)
+         set_tpgd_off
+         dbankif tpgd_tris
+         bcf     tpgd_tris, tpgd_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro PGD_HIGH cy
+;
+;   Cause the target PGD line to be driven high.  CY is the minimum number of
+;   instruction cycles since the last change to the output lines.
+;
+pgd_high macro   cy
+         waitns  tmin, (cy)
+         set_tpgd_on
+         dbankif tpgd_tris
+         bcf     tpgd_tris, tpgd_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro PGD_OFF cy
+;
+;   Set the PGD line to high impedence.  CY is the minimum number of instruction
+;   cycles since the last change to the output lines.
+;
+pgd_off  macro   cy
+         waitns  tmin, (cy)
+         dbankif tpgd_tris
+         bsf     tpgd_tris, tpgd_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro SKIP_PGDHI cy
+;
+;   Skip the next instruction if the target PGD line is high.  CY is the minimum
+;   number of instruction cycles since the last change to the output lines.
+;
+skip_pgdhi macro cy
+         waitns  tmin + compns, (cy) + 0
+         dbankif tpgd_reg
+         btfss   tpgd_reg, tpgd_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Macro SKIP_PGDLO cy
+;
+;   Skip the next instruction if the target PGD line is low.  CY is the minimum
+;   number of instruction cycles since the last change to the output lines.
+;
+skip_pgdlo macro cy
+         waitns  tmin + compns, (cy) + 0
+         dbankif tpgd_reg
+         btfsc   tpgd_reg, tpgd_bit
+         endm
+;
+;*******************************************************************************
+;
+;   Subroutine SERT_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  sert_init, noregs
+
+         pgc_low 100         ;drive PGC low
+         pgd_low 0           ;drive PGD low
+         dbankif pgdd_tris
+         bsf     pgdd_tris, pgdd_bit ;disable the weak PGD drive
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine SERT_TEST_TDRIVE
+;
+;   Test whether the target chip is driving the serial data line.
+;   FLAG_TDRIVE is set if it is, and reset if it is not.  The clock line
+;   is not altered, so this test has no effect on the serial communication
+;   protocol state.  The data line will be left undriven on return.
+;
+         glbsub  sert_test_tdrive, noregs
+
+         pgd_off 100         ;make sure we are not driving the PGD line
+         dbankif gbankadr
+         bsf     flag_tdrive ;init to target is driving the PGD line
+;
+;   Drive the data line weakly low.  The target is definitely driving the
+;   line if it remains high.
+;
+         set_pgdd_off        ;set weak PGD drive to low
+         dbankif pgdd_tris
+         bcf     pgdd_tris, pgdd_bit ;enable the weak PGD drive
+         waitms  0           ;wait one clock interval for line to settle
+         skip_pgdlo 100      ;data line same as weak drive ?
+         jump    done_tdrive ;no, target is definitely driving the line
+;
+;   Drive the data line weakly high.  The target is definitely driving the
+;   line if it remains low.
+;
+         set_pgdd_on         ;set weak PGD drive to high
+         waitms  0           ;wait one clock interval for line to settle
+         skip_pgdhi 100      ;data line same as weak drive ?
+         jump    done_tdrive ;no, target is definitely driving the line
+
+         dbankif gbankadr
+         bcf     flag_tdrive ;indicate target chip is not driving PGD line
+
+done_tdrive unbank           ;FLAG_TDRIVE all set, clean up and leave
+         dbankif pgdd_tris
+         bsf     pgdd_tris, pgdd_bit ;turn off weak PGD drive
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Include the standard serial interface routines that are not dependent on
+;   the particular programmer this firmware is driving.
+;
+/include "picprg_sert.ins.aspic"
+
+         end

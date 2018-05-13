@@ -1,0 +1,185 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Control the target chip Vpp line.
+;
+;   This module exports the following standard routines used during normal
+;   operation:
+;
+;     VPP_OFF  -  Set the Vpp line to high impedence.
+;
+;     VPP_ZERO -  Drive Vpp low to as close to 0 volts as possible.
+;
+;     VPP_ON   -  Drive Vpp high to the previously set voltage.
+;
+;     VPP_SETV -  Set the voltage Vpp for next time Vpp is enabled.
+;                 REG0 contains new voltage with 0-255 mapping to 0-20 volts.
+;
+;     VPP_BLIP -  Produce a short positive pulse on Vpp.
+;
+;     Any of the above routines may wait for a while or start a new
+;     wait interval that is still active on return.  These routines must not
+;     be called with a wait interval in progress.
+;
+;     VPP_ABORT - Disables all Vpp output drivers to the extent possible.
+;                 The purpose of this routine is to shut down the Vpp output
+;                 drivers on a voltage fault.  This happens if a wait
+;                 for a specific Vpp voltage expires before the voltage
+;                 reaches the desired value within the error threshold.
+;                 This routine never changes the current wait interval state.
+;
+;   This implementation uses fixed Vpp driven directly from a processor pin via
+;   a small resistor.  New Vdd settings are therefore "instantaneous" for the
+;   purpose of the rest of the system.  There is no Vpp readback or verification.
+;
+/include "lprg.ins.aspic"
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+
+.vpp     code
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  vpp_init, noregs
+
+         mcall   vpp_off     ;set Vpp output to high impedence
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_OFF
+;
+;   Set the Vpp line to high impedence to the extent possible.
+;
+         glbsub  vpp_off, noregs
+
+         dbankif tvpp_tris
+         bsf     tvpp_tris, tvpp_bit ;set Vpp output to high impedence
+         dbankif gbankadr
+         bcf     flag_vppon  ;indicate Vpp voltage not being applied
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_ZERO
+;
+;   Drive the Vpp line actively low to the extent possible.
+;
+         glbsub  vpp_zero, noregs
+
+         set_tvpp_off        ;set output level to drive Vpp low
+         dbankif tvpp_tris
+         bcf     tvpp_tris, tvpp_bit ;make sure Vpp drive is enabled
+         dbankif gbankadr
+         bcf     flag_vppon  ;indicate Vpp voltage is not being applied
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_ON
+;
+;   Drive the Vpp line high to the currently set Vpp ON voltage.
+;
+         glbsub  vpp_on, noregs
+
+         set_tvpp_on         ;set output level to drive Vpp high
+         dbankif tvpp_tris
+         bcf     tvpp_tris, tvpp_bit ;make sure Vpp drive is enabled
+         dbankif gbankadr
+         bsf     flag_vppon  ;indicate Vpp voltage is being applied
+
+on_leave unbank
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_SETV
+;
+;   Set the new Vpp on voltage to the value in REG0.  The 0-255 value in
+;   REG0 maps to 0-20 volts, although this hardware can't realize the full
+;   range.  The new setting will only take effect the next time Vpp is
+;   transitioned to on.
+;
+;   This programmer has a fixed Vpp level, so this call is ignored.
+;
+         glbsub  vpp_setv, noregs
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_ABORT
+;
+;   Shut off any Vpp drive.  This routine is intended to be called when Vpp
+;   has not reached the intended voltage within tolerance when a wait for a
+;   specific Vpp level elapses.
+;
+         glbsub  vpp_abort, noregs
+
+         mcall   vpp_off
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine VPP_BLIP
+;
+;   Produce a brief pulse on Vpp.  Vpp is assumed to be held low on entry, and
+;   will be held low on exit.
+;
+         glbsub  vpp_blip, noregs
+
+         intr_off
+         set_tvpp_on         ;drive Vpp output high
+         waitns  1000, 1     ;blip duration
+         set_tvpp_off        ;drive Vpp output low again
+         intr_on
+
+         leaverest
+
+         end

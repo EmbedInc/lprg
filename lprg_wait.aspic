@@ -1,0 +1,284 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Routines for waiting for voltage levels to reach their desired value
+;   after a change.
+;
+/include "lprg.ins.aspic"
+
+         extern  cntwait     ;24 bit counter, number base clock ticks left to wait
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+wtype_time equ   0           ;just wait on time, not an analog value (must be 0)
+wtype_vdd equ    1           ;wait for Vdd level
+minerr   equ     100         ;minimum analog tolerance, mV
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+nextwait res     3           ;base clock ticks time of next wait length
+waiterr  res     1           ;error flags from last completed wait
+
+         global  nextwait, waiterr
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+wtype    res     1           ;wait type, one of WTYPE_xxx values
+minmv    res     2           ;minimum mV to wait for
+maxmv    res     2           ;maximum mV to wait for
+
+.wait    code
+;
+;*******************************************************************************
+;
+;   Subroutine WAIT_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  wait_init, noregs
+
+         dbankif gbankadr
+         clrf    waiterr     ;init to no errors on last wait
+
+         dbankif lbankadr
+         clrf    wtype       ;init to last wait was timed only
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine WAIT_START
+;
+;   Start the timer for a new wait interval.  The wait time is in NEXTWAIT
+;   in units of base clock ticks.
+;
+         glbsub  wait_start, noregs
+
+         dbankif gbankadr
+         intr_off            ;temp disable interrupts
+         movff   nextwait+0, cntwait+0
+         movff   nextwait+1, cntwait+1
+         movff   nextwait+2, cntwait+2
+         bcf     flag_done   ;reset flag to indicate wait not elapsed yet
+         intr_on             ;re-enable ineterrupts
+         clrf    waiterr     ;init to no errors this wait
+
+         dbankif lbankadr
+         clrf    wtype       ;init this wait type to timed only
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine WAIT_VDD
+;
+;   Set up the current wait to wait for a specific target Vdd level.  The
+;   16 bit unsigned desired Vdd level is in REG1:REG0 in units of millivolts.
+;
+         glbsub  wait_vdd, noregs
+
+         dbankif lbankadr
+         movlw   wtype_vdd   ;get wait type ID
+         movwf   wtype       ;set wait type ID
+
+savedregs set    regf2 | regf3 ;registers to save/restore this section
+         pushregs savedregs  ;save registers to use as scratch
+;
+;   Make the proportional error tolerance value in REG3:REG2, which is 1/32
+;   (3.1%) of the desired value.
+;
+         rrcf    reg1, w     ;shift right one bit and store in REG3:REG2
+         movwf   reg3
+         rrcf    reg0, w
+         movwf   reg2
+
+         rrcf    reg3        ;shift REG3:REG2 right 4 more bits
+         rrcf    reg2
+         rrcf    reg3
+         rrcf    reg2
+         rrcf    reg3
+         rrcf    reg2
+         rrcf    reg3
+         rrcf    reg2
+
+         movlw   h'07'
+         andwf   reg3        ;set the shifted-in bits to 0
+;
+;   REG3:REG2 contains a fraction of the desired value, which will be used
+;   as the error tolerance.  Now make sure this value is at least MINERR,
+;   which is the minimum error tolerance.
+;
+         movf    reg3, w     ;get high byte of error fraction
+         sublw   high minerr ;compare to high byte of min error
+         jmp_wgt done_err    ;fraction definitely higher, all done ?
+         bnz     err_abs     ;fraction definitely smaller, use abs error ?
+         ;
+         ;   High bytes are equal.
+         ;
+         movlw   low minerr  ;get low byte of min error
+         subwf   reg2, w     ;compare to low byte of fraction
+         jmp_wle done_err    ;fraction is <= min error, all done ?
+
+err_abs                      ;use the absolute minimum error instead of the fraction
+         loadk16 reg2, minerr
+done_err                     ;REG3:REG2 contains the error tolerance
+;
+;   REG1:REG0 contains the desired center value, and REG3:REG2 the error
+;   tolerance.
+;
+;   Now use these values to set the minimum and maximum acceptable values
+;   in MINMV and MAXMV.  The values are clipped to the unsigned 16 bit
+;   integer range.
+;
+         dbankif lbankadr
+         movf    reg2, w
+         subwf   reg0, w     ;make low threshold low byte
+         movwf   minmv+0
+         movf    reg3, w
+         subwfb  reg1, w     ;make low threshold high byte
+         movwf   minmv+1
+         bc      done_minerr ;no borrow ?
+         loadk16 minmv, 0    ;clip at 0
+done_minerr                  ;minimum threshold all set
+
+         movf    reg2, w
+         addwf   reg0, w     ;make high threshold low byte
+         movwf   maxmv+0
+         movf    reg3, w
+         addwfc  reg1, w     ;make high threshold high byte
+         movwf   maxmv+1
+         bnc     done_maxerr ;no carry ?
+         loadk16 maxmv, h'FFFF' ;clip at maximum possible value
+done_maxerr
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine CHECKLEV
+;
+;   Check the conditions of a wait on an analog level.  The current
+;   analog reading is in REG1:REG0.  WAITERR<1:0> is set to indicate
+;   the status of the analog voltage relative to its desired value:
+;
+;     0,0  -  Analog value is within tolerance band.
+;
+;     0,1  -  Analog value is below tolerance band.
+;
+;     1,0  -  Analog value is above tolerance band.
+;
+;     1,1  -  Not used.  The bits are never set to this value.
+;
+;   If the wait is over for any termination reason, FLAG_DONE is set.
+;
+         locsub  checklev, noregs
+;
+;   Check low analog threshold.
+;
+         dbankif gbankadr
+         movlw   b'01'
+         movwf   waiterr     ;init to indicate voltage below threshold
+
+         dbankif lbankadr
+         movf    minmv+0, w  ;make (value - low threshold)
+         subwf   reg0, w
+         movf    minmv+1, w
+         subwfb  reg1, w
+         bnc     ana_out     ;borrow, below low threshold ?
+;
+;   Check high analog threshold.
+;
+         dbankif gbankadr
+         movlw   b'10'
+         movwf   waiterr     ;init to indicate voltage above threshold
+
+         dbankif lbankadr
+         movf    reg0, w     ;make (high threshold - value)
+         subwf   maxmv+0, w
+         movf    reg1, w
+         subwfb  maxmv+1, w
+         bnc     ana_out     ;borrow, above high threshold ?
+;
+;   The analog value is within the threshold limits.
+;
+         dbankif gbankadr
+         clrf    waiterr     ;indicate analog level is within tolerance band
+         bsf     flag_done   ;manually end the wait interval now
+
+ana_out  unbank              ;skip here on analog level out
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine WAIT_CHECK
+;
+;   Check once for wait interval elapsed, then return.  FLAG_DONE is set and
+;   WAITERR indicates the termination reason when the wait is over.
+;
+;   This routine must be called frequently during a wait until the wait
+;   is over.
+;
+         glbsub  wait_check, regf0 | regf1
+
+         dbankif lbankadr
+         movf    wtype, w    ;get ID for what waiting for
+         bz      wcheck_leave ;just a timed wait, no voltage to check ?
+
+         gcall   ad_vdd      ;get millivolts Vdd level in REG1:REG0
+         mcall   checklev    ;check the level and set wait flags accordingly
+
+wcheck_leave unbank          ;common exit point
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine WAIT_WAIT
+;
+;   Perform the wait.  This routine returns when the wait time expires or
+;   the desired analog level was reached if one was set, whichever occurs
+;   first.  If an analog level was set and the wait time expires before
+;   the analog level was reached, then FLAG_WAITERR is set.  FLAG_WAITERR
+;   was previously cleared when the wait was set up by subroutine
+;   WAIT_START.
+;
+         glbsub  wait_wait, noregs
+
+loop_wait unbank
+         mcall   wait_check  ;check for wait is over
+         dbankif gbankadr
+         btfss   flag_done   ;wait is over ?
+         jump    loop_wait   ;no, go back and check again
+
+         leaverest
+
+         end

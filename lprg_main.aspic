@@ -1,0 +1,89 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   This module contains the main application routine that is run after
+;   the system is initialized.
+;
+/include "lprg.ins.aspic"
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+
+.main    code
+;
+;*******************************************************************************
+;
+;   Routine MAIN
+;
+;   This entry point is jumped to from the INIT module, once system
+;   initialization is complete.
+;
+         glbent  main
+;
+;**********
+;
+;   Initialize the state managed by this module.
+;
+
+;
+;**********
+;
+;   Main application loop.  Back here to look for something to do.
+;   Whenever something is found that needs handling, a handler routine
+;   is jumped to.  All handler routines jump back to LOOP_MAIN when done.
+;   This means events are checked in priority order, with high priority
+;   events checked earlier.
+;
+         glbent  loop_main
+         gcall   task_yield  ;give other tasks a chance to run
+;
+;   Handle USB reset.
+;
+         dbankif gbankadr
+         btfss   flag_usbreset
+         jump    no_usbreset
+
+         bcf     flag_usbreset ;clear the event condition
+         bsf     flag_cmdreset ;tell the command processor to reset itself
+no_usbreset
+;
+;   Run the command processor for a short time.
+;
+         gcall   cmd_run
+;
+;   Re-evaluate the LED display based on the current system state.
+;
+         gcall   led_update
+
+         jump    loop_main   ;back to check all event conditions again
+
+         end

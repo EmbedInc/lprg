@@ -1,0 +1,290 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   The routines in this module handle the A/D converter and maintain the
+;   official input voltages.
+;
+/include "lprg.ins.aspic"
+
+         extern  intr_ret_ad ;jump here when done processing A/D interrupt
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+chan0sel equ     b'00000001' ;ADCON0 value for channel 0 selected
+                 ; XX------  unimplemented
+                 ; --0000--  channel 0 selected
+                 ; ------0-  do not start a conversion now
+                 ; -------1  enable the A/D converter
+filtbits equ     3           ;bits to shift to make filter fraction, 1-8
+npole    equ     3           ;number of filter poles per A/D value
+nchan    equ     1           ;number of A/D input channels used
+vddmax   equ     3300        ;mV Vdd for max A/D reading
+admax    equ     h'3FF' << 6 ;filtered A/D value for max reading
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+adchsz   equ     2 * (npole + 1) ;size in bytes for the data of each channel
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+vddscale equ     (vddmax << 16) / admax ;scale to make Vdd mV in high word
+;
+;*******************************************************************************
+;
+;   Macro CHANVALS ch
+;
+;   Define all the state for A/D channel CH.  A 16 bit value will be
+;   allocated for the original A/D value and each filtered version.
+;   These will be called ADchFn, where CH is the channel number and N
+;   goes from 0 to NPOLE.  The label ADchVAL will be same as last
+;   filtered value ADchF<npole>.  ADchVAL is used by any code below
+;   to get the current official value for the A/D channel.  The
+;   number of filtered values per channel is set by NPOLE, above.
+;   This macro therefore allocates 2 * (NPOLE + 1) bytes.
+;
+chanvals macro   ch
+ii       set     0           ;init 0-N filtered value
+  while ii <= npole          ;once for each filtered value
+    if ii == npole           ;last filtered value
+ad#v(ch)val                  ;make label for the official A/D channel value
+      endif
+ad#v(ch)f#v(ii) res 2        ;reserve 16 bits for this value
+ii       set     ii + 1      ;make number of next filtered value
+    endw                     ;back to do next filtered value
+         endm
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+;
+;   Per-channel state.  There are NPOLE+1 16-bit values maintained for each
+;   channel, the raw value and the filtered values after each of NPOLE
+;   low pass filter stages.  These are called ADnF0, ADnF1, ... ADnF<npole>,
+;   where N is the 0, 1, or 3 channel number.
+;
+;   The 10 bit A/D value is left justfied within the 16 bit words.  Each
+;   filter stage uses a fraction of 1 / 2**FILTBITS  (right shift
+;   FILTBITS bits).  One iteration is performed each new A/D reading
+;   for that channel.
+;
+;   The data for each channel is sequential.
+;
+         chanvals 0          ;channel 2 values, Vdd sense voltage
+;
+;   Registers that are only used in the interrupt routine.  The interrupt routine
+;   avoids using the normal REGn registers since they would have to be saved and
+;   restored.
+;
+         defram  0           ;in access bank, no bank switching required to access
+ireg0    res     1
+ireg1    res     1
+ireg2    res     1
+ireg3    res     1
+ireg4    res     1
+ireg5    res     1
+
+
+.ad      code
+;
+;*******************************************************************************
+;
+;   Subroutine AD_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  ad_init, regf0
+;
+;   Set up the A/D hardware.
+;
+         dbankif adcon1
+         movlw   b'00001010'
+                 ; XX------  unimplemented
+                 ; --0-----  use Vss for Vref-
+                 ; ---0----  use Vdd for Vref+
+                 ; ----1110  configure AN0 as analog, the rest digital
+         movwf   adcon1
+
+         dbankif adcon2
+         movlw   b'00000010'
+                 ; 0-------  left justify result in ADRESH:ADRESL
+                 ; -X------  unimplemented
+                 ; --000---  no additional acquisition time on start conversion
+                 ; -----101  select A/D conversion clock of Fosc/16
+         movwf   adcon2
+
+         dbankif adcon0
+         movlw   chan0sel    ;enable A/D and select channel 0
+         movwf   adcon0
+
+         dbankif pie1
+         bsf     pie1, adie  ;enable A/D conversion done interrupts
+;
+;   Initialize the local state.
+;
+         lfsr    0, ad0f0    ;init loop pointer
+         movlw   adchsz * nchan ;init loop counter
+         movwf   reg0
+adin_loop                    ;back here to init each new byte
+         clrf    postinc0    ;init this byte to 0
+         decfsz  reg0        ;count one less byte left to do
+         jump    adin_loop   ;back to do next byte
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine ADFILTER
+;
+;   Perform one filtering operation.  FSR0 is pointing to the 16 bit
+;   input value, which will be filtered into the following 16 bit value.
+;   FSR0 will be left pointing to the filter output value.
+;
+;   FILTBITS indicates the number of bits to shift right to make the
+;   fractional filter values.
+;
+;   Trashes IREG0 - IREG5.
+;
+         locsub  adfilter, noregs
+;
+;   Get the input values.
+;
+         clrf    ireg0       ;get new value into IREG2:IREG0
+         movff   postinc0, ireg1
+         movff   postinc0, ireg2
+
+         clrf    ireg3       ;get existing filter value into IREG5:IREG3
+         movff   postinc0, ireg4
+         movff   postdec0, ireg5
+;
+;   Shift both values right FILTBITS bits.  The low byte of each 24 bit
+;   value is zero, so the bit shifted out the LSB will always be zero since
+;   FILTBITS is always in the range of 1-8.
+;
+         bcf     status, c   ;init first bit to shift in
+ii       set     0
+  while ii < filtbits
+         rrcf    ireg2       ;shift new value 1 bit right
+         rrcf    ireg1
+         rrcf    ireg0
+         rrcf    ireg5       ;shift filter value 1 bit right
+         rrcf    ireg4
+         rrcf    ireg3
+ii       set     ii + 1
+    endw
+;
+;   Make NEW - FILT:  IREG2:IREG0 - IREG5:IREG3 --> IREG2:IREG0
+;
+         movf    ireg3, w
+         subwf   ireg0       ;subtract the low bytes
+         movf    ireg4, w
+         subwfb  ireg1       ;subtract the middle bytes
+         movf    ireg5, w
+         subwfb  ireg2       ;subtract the high bytes
+;
+;   Add the result into the filter.  FSR0 is pointing to the low byte
+;   of the filter.
+;
+         movf    ireg1, w
+         addwf   postinc0    ;add the low bytes
+         movf    ireg2, w
+         addwfc  postdec0    ;add the high bytes
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Routine AD_INTR
+;
+;   This routine is jumped to from the interrupt handler on an A/D conversion
+;   done interrupt.  It must jump back to INTR_RET_AD when done.  This
+;   routine is run during an interrupt.
+;
+         glbent  ad_intr
+
+         dbankif pir1
+         bcf     pir1, adif  ;clear the interrupt condition
+
+         lfsr    0, ad0f0    ;point FSR0 to filter input value
+         movff   adresl, postinc0 ;save new A/D reading
+         movff   adresh, postdec0
+;
+;   Apply the filter operations to update all the state for the channel
+;   that was just read.  FSR0 is pointing to the start of the state for
+;   that channel.
+;
+ii       set     1
+  while ii <= npole
+         mcall   adfilter    ;perform the filter for this pole
+ii       set     ii + 1
+    endw
+
+         gjump   intr_ret_ad ;return to interrupt handler
+;
+;*******************************************************************************
+;
+;   Subroutine AD_VDD
+;
+;   Return the target chip Vdd voltage in REG1:REG0 in units of millivolts.
+;
+         glbsub  ad_vdd, regf2 | regf3 | regfb
+;
+;   Load filtered value in low 16 bits of REGA.
+;
+         intr_off            ;disable interrupts while reading filtered A/D value
+         movff   ad0val+0, rega+0
+         movff   ad0val+1, rega+1
+         intr_on             ;re-enable interrupts
+;
+;   Load scale factor into REGB.
+;
+         loadk32 regb, vddscale
+;
+;*******************************************************************************
+;
+;   Common code for returning A/D reading.  The filtered 16 bit A/D reading
+;   is in the low 16 bits of REGA, and the scale factor for this value in
+;   REGB.  The scale factor is set so that after a filtered reading is multiplied
+;   by it, the value in millivolts ends up in the high 16 bits of the 32 bit
+;   result.
+;
+;   The saved registers on the data stack are assumed to be the same
+;   as those pushed by the subroutine immediately above here in the source
+;   file.
+;
+ad_ret   unbank              ;common code to return A/D reading in millivolts
+         clrf    rega+2      ;expand reading into all of REGA
+         clrf    rega+3
+
+         gcall   mulu        ;unsigned integer multiply REGA x REGB--> REGA
+
+         movff   reg2, reg0  ;pass back resulting value in millivolts
+         movff   reg3, reg1
+
+         leaverest
+
+         end

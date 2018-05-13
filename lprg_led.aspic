@@ -1,0 +1,324 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   High level interface to the status LED.
+;
+/include "lprg.ins.aspic"
+
+         extern  cn_host     ;time until host activity considered over
+         extern  cn_tron     ;time until target no longer considered on
+         extern  cn_writ     ;time until no longer considered writing to target
+         extern  ledbri      ;phase 1 brightness in low nibble, phase 2 in high
+         extern  ledph1      ;phase 1 time in 5mS units
+         extern  ledph2      ;phase 2 time in 5mS units
+         extern  cntled      ;5mS ticks until next LED phase
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Symbolic constants for the various states indicated by the LED.
+;
+leds_unk equ     0           ;LED state is unknown, must always be 0
+leds_idle equ    1           ;the unit is idle
+leds_host equ    2           ;host communication but no target activity
+leds_tron equ    3           ;the target is on
+leds_prog equ    4           ;the target is being programmed
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+leds     res     1           ;current LED state, use LEDS_xxx constants
+
+.led     code
+;
+;*******************************************************************************
+;
+;   Macro SETLED ms1, bri1, ms2, bri2
+;
+;   Set the LED display strategy.
+;
+;   The LED display state is automatically alternated between two
+;   "phases".  MS1 and BRI1 set the time and brightness for phase 1,
+;   and MS2 and BRI2 for phase 2.  MS1 and MS2 are in units of
+;   milliseconds.  These values will be rounded and clipped to the
+;   available internal resolution.  BRI1 and BRI2 are the desired
+;   brightness during each of the phases.  The brightness values
+;   range from 0 to 15 and are linear.  0 results in off, and 15
+;   results in full on.  Out of range values will be clipped to the
+;   nearest allowed value.
+;
+;   The LED display will immediately be switched to the start of
+;   the new phase 1.
+;
+;   W is trashed.
+;
+setled   macro   ms1, bri1, ms2, bri2
+         local   i1, i2
+
+i1       set     (bri1)      ;get sanitized BRI1 into I1
+  if i1 < 0
+i1       set     0
+    endif
+  if i1 > 15
+i1       set     15
+    endif
+
+i2       set     (bri2)      ;get sanitized BRI2 into I2
+  if i2 < 0
+i2       set     0
+    endif
+  if i2 > 15
+i2       set     15
+    endif
+
+         dbankif gbankadr
+         movlw   i1 | (i2 << 4) ;get combined brightness values byte
+         movwf   ledbri      ;set the brightness for both phases
+
+i1       set     ((ms1) + 2) / 5 ;make sanitized phase 1 length in 5mS units
+  if i1 < 0
+i1       set     0
+    endif
+  if i1 > 255
+i1       set     255
+    endif
+i2       set     ((ms2) + 2) / 5 ;make sanitized phase 2 length in 5mS units
+  if i2 < 0
+i2       set     0
+    endif
+  if i2 > 255
+i2       set     255
+    endif
+
+         movlw   i1          ;get phase 1 time
+         movwf   ledph1      ;set new value
+         movlw   i2          ;get phase 2 time
+         movwf   ledph2      ;set new value
+
+         movlw   1
+         intr_off            ;temp disable interrupts
+         movwf   cntled      ;set current phase to expire next tick
+         bcf     flag_ledph1 ;force switch to phase 1 next tick
+         intr_on             ;re-enable interrupts
+
+         endm
+;
+;*******************************************************************************
+;
+;   Subroutine LED_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  led_init, noregs
+
+         dbankif lbankadr
+         clrf    leds        ;init LED state to unknown
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine LED_HOSTIO
+;
+;   This routine is called when any host I/O is performed.  It restarts
+;   the host activity timer.  The various activity timers are eventually
+;   used to decide what state is displayed on the STATUS LED.
+;
+         glbsub  led_hostio, noregs
+
+         dbankif gbankadr
+         movlw   to_host     ;restart the timer
+         movwf   cn_host
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine LED_WRITING
+;
+;   This routine is called when the target is being written to.  It
+;   restarts the writing activity timer.  The various activity timers are
+;   eventually used to decide what state is displayed on the STATUS LED.
+;
+         glbsub  led_writing, noregs
+
+         dbankif gbankadr
+         movlw   to_writ     ;restart the timer
+         movwf   cn_writ
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine LED_SET_IDLE
+;
+;   Set the LED to indicate the IDLE state.
+;
+         locsub  led_set_idle, noregs
+
+         dbankif lbankadr
+         movlw   leds_idle   ;get desired LED state
+         xorwf   leds, w     ;compare to the current state
+         skip_nz             ;need to change the state ?
+         jump    sidl_leave  ;no, nothing more to do
+
+         movlw   leds_idle   ;indicate the new state
+         movwf   leds
+         setled  1000, 1, 1000, 1
+
+sidl_leave
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine LED_SET_TRON
+;
+;   Set the LED to indicate the target chip is on and must not be removed.
+;
+         locsub  led_set_tron, noregs
+
+         dbankif lbankadr
+         movlw   leds_tron   ;get desired LED state
+         xorwf   leds, w     ;compare to the current state
+         skip_nz             ;need to change the state ?
+         jump    strn_leave  ;no, nothing more to do
+
+         movlw   leds_tron   ;indicate the new state
+         movwf   leds
+         setled  250, 8, 250, 4
+
+strn_leave
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine LED_SET_HOST
+;
+;   Set the LED to indicate the HOST state.
+;
+         locsub  led_set_host, noregs
+
+         dbankif lbankadr
+         movlw   leds_host   ;get desired LED state
+         xorwf   leds, w     ;compare to the current state
+         skip_nz             ;need to change the state ?
+         jump    shos_leave  ;no, nothing more to do
+
+         movlw   leds_host   ;indicate the new state
+         movwf   leds
+         setled  125, 2, 125, 1
+
+shos_leave
+         leaverest
+;
+;*******************************************************************************
+;
+;   Local subroutine LED_SET_PROG
+;
+;   Set the LED to indicate the PROG state.
+;
+         locsub  led_set_prog, noregs
+
+         dbankif lbankadr
+         movlw   leds_prog   ;get desired LED state
+         xorwf   leds, w     ;compare to the current state
+         skip_nz             ;need to change the state ?
+         jump    sprg_leave  ;no, nothing more to do
+
+         movlw   leds_prog   ;indicate the new state
+         movwf   leds
+         setled  500, 15, 500, 8
+
+sprg_leave
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine LED_UPDATE
+;
+;   The subroutine is called periodically from the main event loop.  It makes
+;   sure that the LED state is current with the internal state.
+;
+;   Whenever an event occurs that might effect the LED indicator state, the
+;   timer for that state is reset to maximum.  This routine sets the actual
+;   LED state to the highest level state for which the timer is non-zero.
+;
+         glbsub  led_update, noregs
+;
+;   Reset the target on timer to its maximum if either Vdd or Vpp are currently
+;   on.
+;
+         dbankif gbankadr
+         btfsc   flag_vddon  ;Vdd is off ?
+         jump    targon      ;no, target is on
+         btfss   flag_vppon  ;Vpp is on ?
+         jump    done_tron   ;no, skip updating CN_TRON counter
+targon                       ;either Vdd or Vpp to the target is on
+         movlw   to_tron
+         movwf   cn_tron     ;reset target on timer to maximum
+done_tron                    ;done updating target on timer
+;
+;   Set the LED display according to the highest active state.
+;
+         dbankif gbankadr
+         movf    cn_writ
+         skip_nz             ;target is being written to ?
+         jump    upd_nwrite  ;no
+         mcall   led_set_prog
+         jump    upd_leave
+upd_nwrite dbankis gbankadr
+
+         dbankif gbankadr
+         movf    cn_tron
+         skip_nz             ;target is on ?
+         jump    upd_ntron   ;no
+         mcall   led_set_tron
+         jump    upd_leave
+upd_ntron dbankis gbankadr
+
+         dbankif gbankadr
+         movf    cn_host
+         skip_nz             ;host communication in progress ?
+         jump    upd_nhost   ;no
+         mcall   led_set_host
+         jump    upd_leave
+upd_nhost dbankis gbankadr
+
+         mcall   led_set_idle ;no activity found, indicate idle status
+
+upd_leave unbank             ;common exit point
+         leaverest
+
+         end

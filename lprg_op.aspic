@@ -1,0 +1,38 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Routines that perform higher level operations on the target chip.
+;   The code in this module does not control I/O lines directly, but
+;   is layered on the routines in the VDD, VPP, SERT, and other
+;   modules.
+;
+/include "lprg.ins.aspic"
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+/const   waitreset real = 5.0 ;additional mS to wait after reset
+/const   waithiz real = 50.0 ;mS to wait after setting all lines to high impedence
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+
+/include "picprg_op.ins.aspic"
+
+         end

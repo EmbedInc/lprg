@@ -1,0 +1,176 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Include file for the LPRG PIC application.
+;
+;   This firmware runs on the main control processor of an Embed Inc
+;   LProg PIC programmer.  The control processor is a Microchip PIC
+;   18F2455.
+;
+;   Debug switches.  These must all be FALSE for production builds.
+;
+/const   debug_icd bool = false ;build for debugging with ICD, RealIce, etc
+/const   debug   bool = false ;build for any kind of debugging
+/const   lprg1   bool = false ;build for LPRG1 board, not LPRG2
+;
+/include "lprglib.ins.aspic"
+;
+;   General firmware information reported by VERS command.
+;
+info_org equ     1           ;1-254 organization ID, 1 = official Embed Inc
+info_fwid equ    fwtype      ;ID for LProg firmware
+info_vers equ    fwver       ;1-254 firmware version number within ORG and FWID
+info_cvlo equ    26          ;lowest spec version backward compatible with
+info_cvhi equ    29          ;highest spec version compatible with
+info_info equ    0           ;private 32 bit information about this firmware
+;
+;   Application configuration parameters
+;
+/const   pwminst integer = 250 ;instruction cycles in PWM period
+/const   tickinst integer = 1000 ;instruction cycles per base clock tick
+/const   reset_slow bool = false ;use slower reset, non-standard hardware workaround
+gbankadr equ     0           ;adr within globals bank (access bank on PIC18)
+to_hostms equ    250         ;10-2500 mS indicate host communication after receive
+to_tronms equ    250         ;10-2500 mS indicate target on since last on
+to_writms equ    250         ;10-2500 mS indicate writing since last write
+namemaxlen equ   80          ;max allowed name string length in EEPROM
+
+tsksave  set     0           ;build the mask of registers for TASK_YIELD to save
+tsksave  set     tsksave | regf0
+tsksave  set     tsksave | regf1
+tsksave  set     tsksave | regf2
+tsksave  set     tsksave | regf3
+tsksave  set     tsksave | regf4
+tsksave  set     tsksave | regf5
+tsksave  set     tsksave | regf6
+tsksave  set     tsksave | regf7
+;
+;   Derived constants.
+;
+/include "(cog)src/pic/task_setup.ins.aspic"
+/include "lprg_usb.ins.aspic" ;global definitions required by USB subsystem
+
+tickinst equ     [v tickinst] ;instruction cycles per base clock tick
+/const   tickus  real = [* 1e6 [/ tickinst [/ freq_osc 4]]] ;uS per base clock tick
+tickus   equ     [v [rnd tickus]] ;uS base clock tick period
+tick100ns equ    [rnd [* tickus 10]] ;clock tick period in units of 100nS
+pwminst  equ     [v pwminst] ;instruction cycles in PWM periods
+/const   pwmmax  integer = [* pwminst 4] ;10 bit PWM value for 100% duty cycle
+pwmmax   equ     [v pwmmax]  ;10 bit PWM value for 100% duty cycle
+to_host  equ     (to_hostms + 5) / 10 ;host comm indicator time, 10 ms units
+to_tron  equ     (to_tronms + 5) / 10 ;target on indicator time, 10 ms units
+to_writ  equ     (to_writms + 5) / 10 ;write indicator time, 10 ms units
+t2pms    equ     freq_inst / (tickinst * 1000) ;base clock ticks per millisecond
+  if (t2pms * tickinst * 1000) != freq_inst
+         error   Not integer clock ticks per millisecond
+    endif
+;
+;   EEPROM allocation.  Each of the EE_xxx symbols is the offset of a particular piece
+;   of non-volatile state from the beginning of the EEPROM.
+;
+  cblock 0
+         ee_namelen: 1       ;number of characters in user-settable name string
+         ee_name: namemaxlen ;the user-settable name string characters
+         ee_opmode: 1        ;0 = serial comm mode, 255 = normal operation
+    endc
+;
+;   Response byte values.  Responses are sent to the host over the serial
+;   line.  Some of these may be sent asynchronously, and not really
+;   in response to anything sent by the host.
+;
+;   Multi-byte numeric parameters following response codes are sent in
+;   least to most significant byte order.
+;
+rsp_ack  equ     1           ;last command acknowledged, clear to send next
+;
+;**********
+;
+;   Global flag bits.  As many GFL0 thru GFLn variables as needed are
+;   automatically created by the /FLAG preprocessor directive.  After all
+;   flags are defined, NFLAGB will be left indicating the number of GFLx
+;   variables created.  For each flag, the following assembler symbols
+;   will be defined:
+;
+;     flag_<name>_regn  -  0-N GFLn variable number containing the flag
+;     flag_<name>_bit   -  0-7 flag bit number within its GFLn variable
+;     flag_<name>       -  string substitution macro gfl<n>,<bit>.  This
+;                          symbol can be used directly with bit manupulation
+;                          instructions.
+;
+;   See the PREPIC documentation file for details of the /FLAG directive.
+;
+/flag    pwm1                ;reload PWM 1 value next tick
+/flag    pwm2                ;reload PWM 2 value next tick
+/flag    vddon               ;Vdd is being driven by the programmer
+/flag    vppon               ;Vpp is being driven by the programmer
+
+/flag    done                ;wait interval has elapsed
+/flag    ledph1              ;in STATUS LED phase 1, not 2
+/flag    prom                ;non-volatile memory is acquired by a task
+/flag    promcmd             ;non-volatile memory is acquired by command processor
+
+/flag    promusb0            ;non-volatile memory is acquired by USB endpoint 0 handler
+/flag    sin                 ;a serial line input byte is available
+/flag    inusb               ;command is coming from the USB
+/flag    sendack             ;command received via interface that requires ACK rsp
+
+/flag    serial              ;serial communication is enabled
+/flag    cmdreset            ;command processor should reset itself
+;
+;**********
+;
+;   I/O pin declarations.  /INBIT and /OUTBIT are preprocessor
+;   directives.  Each one defines a single I/O pin.  See the PREPIC
+;   documentation file for details.  Briefly, the directives are:
+;
+;     /INBIT <name> <port> <bit> [pup]
+;     /OUTBIT <name> <port> <bit> [<initial value>]
+;
+;   The following assembler symbols will be defined for each /INBIT
+;   and /OUTBIT:
+;
+;     <name>_reg  -  Address of port register containing the bit.
+;     <name>_tris -  Address of TRIS register for the port.
+;     <name>_bit  -  0-7 bit number withing the port.
+;     <name>_pin  -  String substitution macro for the port register
+;                    and the I/O bit number.  This symbol can be used
+;                    directly with bit manipulation instructions.
+;
+;   The ports are initialized in the PORT module according to the I/O
+;   bit definitions here.
+;
+/inbit   vvdd    porta 0     ;target Vdd voltage input
+
+/outbit  tpgd    portb 0     ;target PGD drive and read line
+/outbit  tpgc    portb 1     ;target PGC output drive
+/outbit  vddon   portb 2     ;enables Vdd drive to target
+/outbit  vdddrain portb 3    ;enables active drain on target Vdd
+/outbit  tvpp    portb 4     ;target Vpp output drive
+/inbit   pgm     portb 5     ;low voltage prog input, not used
+/outbit  cpgc    portb 6     ;PGC for this processor
+/outbit  cpgd    portb 7     ;PGD for this processor
+
+/outbit  pgdd    portc 0     ;weak PGD drive, disable during normal operation
+/if lprg1
+  /then
+    /outbit led portc 2 n    ;low turns on LED on LPRG1 board
+  /else
+    /outbit led portc 2      ;high turns on LED on LPRG2 board
+  /endif
+/outbit  tx      portc 6     ;UART output
+/outbit  rx      portc 7     ;UART input, init to unused output pin
+
+/include "picprg.ins.aspic"

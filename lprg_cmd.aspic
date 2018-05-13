@@ -1,0 +1,1005 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Host command processor.  The routines in this module interpret and
+;   process the command stream coming from the host computer.
+;
+/include "lprg.ins.aspic"
+
+         extern  nextwait    ;unsigned 24 bit base ticks for next wait
+         extern  waiterr     ;status from last completed wait
+         extern_flags        ;declare global flag bits EXTERN
+
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+first_opcode equ 0           ;first valid opcode in opcodes jump table
+maxstack equ     4           ;max thread nesting supported on YIELD
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Set MSKSAVE.  This is the bit mask of all the registers that are to
+;   be saved accross YIELD.  The remaining registers will be trashed.
+;
+msksave  equ     regf0 | regf1 | regf2 | regf3 | regf8
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+;
+;   Save area for the general registers while the thread is swapped out.
+;   The specific registers to be saved are indicated my MSKSAVE.
+;
+ii       set     0           ;init register number
+  while ii < numregs
+    if (1 << ii) & msksave   ;save/restore this register accross YIELD ?
+savereg#v(ii) res 1          ;make save area for this register
+      endif
+ii       set     ii + 1      ;advance to next register number
+    endw
+;
+;   Save area for the thread-specific part of its call stack while
+;   it is swapped out.
+;
+cmd_nstk res     1           ;1-MAXSTACK number of entries in saved stack
+cmd_stack res    maxstack * 3 ;save area for thread part of call stack
+buf      res     8           ;scratch buffer, temp per command
+
+.cmd     code
+
+;*******************************************************************************
+;
+;   Subroutine CMD_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  cmd_init, noregs
+;
+;   Initialize local state.
+;
+         dbankif lbankadr
+         movlw   low thread_start ;put thread start address on saved stack
+         movwf   cmd_stack+0
+         movlw   high thread_start
+         movwf   cmd_stack+1
+         movlw   upper thread_start
+         movwf   cmd_stack+2
+         movlw   1           ;indicate saved stack has one entry
+         movwf   cmd_nstk
+
+         leaverest
+
+;*******************************************************************************
+;
+;   Local subroutine YIELD
+;
+;   Release the processor for use by other foreground tasks.  Only the
+;   registers indicated by MSKSAVE are preserved by this subroutine.
+;
+;   The thread may be up to MAXSTACK-1 levels in subroutines below the
+;   initial thread start point.  However, nothing additional may be left
+;   on the software data stack.  Neither of these restrictions are
+;   enforced or verified, but all manner of strange behaviour can result
+;   in their violation.
+;
+         locsub  yield, noregs
+;
+;   Save the general registers indicated by MSKSAVE.
+;
+ii       set     0           ;init register number
+  while ii < numregs
+    if (1 << ii) & msksave   ;save/restore this register accross YIELD call ?
+         movff   reg#v(ii), savereg#v(ii) ;save this register
+      endif
+ii       set     ii + 1      ;advance to next register number
+    endw
+;
+;   It is now OK to trash any of the general registers.
+;
+;   Save the call stack to CMD_STACK.
+;
+;   The call stack has at least two entries right now.  The top of stack
+;   is the return address from YIELD, which is effectively the thread
+;   restart address.  The bottom stack entry is the return address from
+;   CMD_RUN, and will be used here to exit the thread.
+;
+;   Register useage:
+;
+;     REG1  -  Number of stack levels left to save.
+;
+;     FSR0  -  Points to where to store next byte in stack save area.
+;
+         dbankif stkptr
+         decf    stkptr, w   ;get number of stack levels to save
+         andlw   b'00011111' ;mask in only the stack depth field
+         movwf   reg1        ;init loop counter
+         dbankif lbankadr
+         movwf   cmd_nstk    ;indicate number of entries in stack save area
+         lfsr    0, cmd_stack ;init pointer to where to write first saved byte
+yl_loop                      ;back here each new stack level to save
+         movff   tosl, postinc0 ;save this stack entry
+         movff   tosh, postinc0
+         movff   tosu, postinc0
+         pop                 ;remove saved entry from the stack
+         decfsz  reg1        ;count one less entry left to save
+         jump    yl_loop     ;back to save next stack entry
+
+         return              ;return from CMD_RUN
+
+;*******************************************************************************
+;
+;   Local subroutine GET_BYTE
+;
+;   Get the next input byte into REG0.  This subroutine will not return
+;   until an input byte is available.  Only the registers listed in MSKSAVE
+;   will be preserved.  Other tasks will be run while waiting for a new
+;   input byte to become available.  A YIELD is guaranteed to be performed
+;   at least once.
+;
+         locsub  get_byte, regf1
+
+gbloop   unbank              ;back here until input byte is available
+         popregs savedregs
+         mcall   yield       ;give other tasks a chance to run
+         pushregs savedregs
+         dbankif gbankadr
+         btfss   flag_inusb  ;input is coming from the USB ?
+         jump    gb_inuart   ;input is coming from the UART
+         ;
+         ;   The input for this command is coming from the USB.
+         ;
+         clrf    reg1        ;indicate to transfer byte if one is available
+         gcall   usb_get1    ;try to get a byte from the USB
+         btfsc   reg1, usbs_noxf ;we got a byte ?
+         jump    gbloop      ;no, go back and try again
+         jump    gb_havebyte ;return with the byte in REG0
+         ;
+         ;   The input for this command is coming from the UART.
+         ;
+gb_inuart dbankis gbankadr
+         btfss   flag_sin    ;an input byte is available ?
+         jump    gbloop      ;no, go back and check again
+         gcall   uart_get    ;get the input byte into REG0
+
+gb_havebyte unbank           ;the input byte is in REG0
+         gcall   led_hostio  ;indicate host I/O in progress
+         leaverest
+
+;*******************************************************************************
+;
+;   Macro GETBYTE
+;
+;   Call GET_BYTE, which is defined immediately above.  This macro is
+;   to make it easier to exchange code with the PRG firmware where
+;   there is no GET_BYTE call, only the GETBYTE macro.
+;
+getbyte  macro
+         mcalll  get_byte    ;get the next byte into REG0
+         endm
+
+;*******************************************************************************
+;
+;   Subroutine PUT_BYTE
+;
+;   Send the byte in REG0 to the port the command it is in response to came
+;   from.
+;
+         locsub  put_byte, regf1
+
+         dbankif gbankadr
+         btfss   flag_inusb  ;command input came from the USB ?
+         jump    pb_uart     ;command input is coming from the UART
+;
+;   Send the byte out the USB.
+;
+pb_loopu unbank              ;back here to retry sending byte via USB
+         clrf    reg1        ;indicate to tranfer byte if possible
+         gcall   usb_put1    ;try to send the byte
+         btfss   reg1, usbs_noxf ;the byte was not sent ?
+         jump    pb_leave    ;the byte was sent
+
+         popregs savedregs
+         mcall   yield       ;give other tasks a chance to run
+         pushregs savedregs
+         jump    pb_loopu
+;
+;   Send the byte out the UART.
+;
+pb_uart  unbank
+         gcall   uart_put    ;send the byte in REG0
+
+pb_leave unbank              ;common exit point
+         leaverest
+
+;*******************************************************************************
+;
+;   Macro SENDBYTE
+;
+;   Send the byte in REG0 as a response to the current command.  This
+;   macro provides a means to customize the code for sending a byte
+;   depending on implementation.
+;
+sendbyte macro
+         mcalll  put_byte
+         endm
+
+;*******************************************************************************
+;
+;   Macro SENDK const
+;
+;   Send the indicated 8 bit constant value to the host.
+;
+;   W, REG0, and the current bank setting are trashed.
+;   All registers not listed in MSKSAVE may be trashed.
+;
+sendk    macro   const
+         loadk8  reg0, const
+         sendbyte
+         endm
+
+;*******************************************************************************
+;
+;   Local subroutine WAITREADY
+;
+;   Wait for the current wait interval, if any, to be over.  YIELD is
+;   called continually until the wait interval is over.  YIELD is not
+;   called if there is no wait interval in progress when this routine is
+;   called.  All registers not listed in MSKSAVE may be trashed.
+;
+         locsub  waitready, noregs
+
+wrloop   unbank
+         dbankif gbankadr
+         btfsc   flag_done   ;wait time not over yet ?
+         return              ;wait is over, return to caller
+         mcall   yield       ;give other tasks a chance to run
+         gcall   wait_check  ;check wait conditions once
+         jump    wrloop      ;back and check wait interval again
+
+;*******************************************************************************
+;
+;   Macro WAITDONE
+;
+;   Wait for the current wait interval, if any, to be over.  This version
+;   calls the local subroutine WAITREADY, which returns to the main event
+;   loop until the wait interval has elapsed.
+;
+waitdone macro
+         mcalll  waitready
+         endm
+
+;*******************************************************************************
+;
+;   Subroutine ACQUIRE_NVOL
+;
+;   Acquire exclusive access to the system non-volatile memory.
+;
+         locsub  acquire_nvol, noregs
+
+aqnv_loop unbank             ;back here until non-volatile memory is available
+         mcall   yield       ;give other tasks a chance to run
+         dbankif gbankadr
+         btfsc   flag_prom   ;non-volatile memory is available ?
+         jump    aqnv_loop   ;no, back and check again
+         bsf     flag_prom   ;indicate non-volatile memory now in use
+         bsf     flag_promcmd ;indicate in use by command processing thread
+
+         leaverest
+
+;*******************************************************************************
+;
+;   Macro PROM_ACQUIRE
+;
+;   Wait for the non-volatile memory to be available, then acquire it for our
+;   exclusive use.
+;
+prom_acquire macro
+         mcalll  acquire_nvol
+         endm
+
+;*******************************************************************************
+;
+;   Macro PROM_RELEASE
+;
+;   Release our use of the non-volatile memory.
+;
+prom_release macro
+         dbankif gbankadr
+         bcf     flag_promcmd ;indicate not in use by command processor
+         bcf     flag_prom   ;indicate non-volatile memory not in use
+         endm
+
+;*******************************************************************************
+;
+;   Subroutine CMD_RUN
+;
+;   Run the command handling thread for a short time.
+;
+;   This subroutine is intended to be called from the main event loop.
+;   It **MUST** be called from top level code that is not nested in
+;   any subroutine.  In other words, the call stack must be empty at
+;   the time of the call.
+;
+;   WARNING: All general registers may be trashed by this subroutine.
+;
+         glbsub  cmd_run, noregs
+;
+;   Push the contents of the saved thread stack onto the call stack
+;   to restore the thread's call context inside YIELD before it returned
+;   to the event loop.  The last (top of stack) saved address is not
+;   restored to the stack because it is the thread restart address.
+;   This will be loaded directly into the PC later to restart the thread.
+;
+         dbankif lbankadr
+         lfsr    0, cmd_stack-1 ;init end of saved stack pointer for 0 levels
+         movf    cmd_nstk, w ;get number of stack levels to restore
+         movwf   reg1        ;init loop counter
+         mullw   3           ;make number of bytes to restore
+         movf    prodl, w    ;get the number of saved stack bytes
+         addwf   fsr0l       ;update pointer to last saved stack byte
+loop_run                     ;back here each new stack level to restore
+         dcfsnz  reg1        ;count one less address to restore to call stack
+         jump    done_run    ;done restoring all but last call stack entry ?
+         push                ;create a new call stack entry
+         movf    postdec0, w ;copy saved address to new top of call stack
+         movwf   tosu
+         movf    postdec0, w
+         movwf   tosh
+         movf    postdec0, w
+         movwf   tosl
+         jump    loop_run    ;back to do next call stack entry
+done_run                     ;done restoring the call stack
+;
+;   Restore the registers indicated by MSKSAVE.
+;
+ii       set     0           ;init register number
+  while ii < numregs
+    if (1 << ii) & msksave   ;save/restore this register accross YIELD call ?
+         movff   savereg#v(ii), reg#v(ii) ;restore this register
+      endif
+ii       set     ii + 1      ;advance to next register number
+    endw
+;
+;   Restart the thread right after where it called YIELD.  The restart
+;   address is at the beginning of the thread stack save area.
+;
+         dbankif lbankadr
+         movf    cmd_stack+2, w ;jump to the restart address
+         movwf   pclatu
+         movf    cmd_stack+1, w
+         movwf   pclath
+         movf    cmd_stack+0, w
+         movwf   pcl
+
+;*******************************************************************************
+;
+;   Thread to process received commands.
+;
+;   The main event loop calls CMD_RUN to start a time slice for this
+;   thread.  The time slice is ended when the thread calls YIELD.
+;   YIELD may be called up to MAXSTACK-1 levels in subroutines below the
+;   main thread level.
+;
+thread_start unbank          ;the thread will start here the first time
+
+cmd_done unbank              ;done successfully processing last command
+cmd_next unbank              ;back here to interpret next byte as command opcode
+cmd_timeout unbank           ;aborts to here on input stream timeout
+;
+;   Get the opcode of the next command.  Commands can come from the UART or
+;   from the USB.  Once the command opcode has been received from one of these
+;   streams, the rest of the command must also be received from the same stream
+;   and any response data sent to that stream.  FLAG_INUSB is set according
+;   to where the opcode byte came from.  This flag is used to direct where to
+;   get subsequent bytes from and where to send response bytes to.
+;
+         dbankif gbankadr
+         bcf     flag_inusb  ;init to command is from UART
+         bsf     flag_sendack
+
+cmd_getopc unbank            ;back here to retry getting opcode
+         mcall   yield       ;give other tasks a chance to run
+
+         dbankif gbankadr
+         btfss   flag_sin    ;a byte is available from the UART ?
+         jump    cmd_getusb  ;no, try the USB
+         gcall   uart_get    ;get the opcode byte into REG0
+         jump    cmd_haveopc ;done getting opcode byte
+
+cmd_getusb unbank            ;try getting byte from the USB
+         clrf    reg1        ;indicate to transfer a byte if possible
+         gcall   usb_get1    ;try to get a byte
+         btfsc   reg1, usbs_noxf ;got a byte ?
+         jump    cmd_getopc  ;no, back and try both input streams again
+         dbankif gbankadr
+         bsf     flag_inusb  ;indicate this command is from the USB
+         bcf     flag_sendack ;don't send ACK for commands from USB
+
+cmd_haveopc unbank           ;opcode in REG0, FLAG_INUSB set according to input
+;
+;   Check the opcode byte for within range of jump table entries.
+;
+  if first_opcode != 0       ;commands don't start at zero ?
+         movlw   first_opcode ;get first valid opcode value
+         subwf   reg0, w     ;make table offset for this opcode
+         skip_wle            ;opcode not before table start ?
+         jump    cmd_next    ;invalid opcode, ignore it
+    else                     ;the command table starts at opcode 0
+         movf    reg0, w     ;get the opcode, which is also the table entry number
+    endif
+         ;
+         ;   The opcode is not before the start of the opcodes table,
+         ;   and the table offset for the selected entry is in W.
+         ;
+         movwf   reg1        ;save the table offset in REG1
+         sublw   tbl_cmd_n - 1 ;compare to last valid command ID
+         skip_wle            ;command ID is within range ?
+         jump    cmd_next    ;invalid command ID, ignore it
+;
+;   The opcode is within range of the opcodes jump table.  The original
+;   opcode is in REG0, and the 0-N table entry number in REG1.
+;
+         mcall   tblookup    ;look up table entry REG1 into REG3,REG2
+
+         movf    reg2, w     ;set Z if table entry value was 0
+         iorwf   reg3, w
+         skip_nz             ;table entry contains a valid address offset ?
+         jump    cmd_next    ;no, ignore this command
+;
+;   Send the ACK byte to the host if the command was received from an
+;   interface that uses protocol level flow control.
+;
+         dbankif gbankadr
+         btfss   flag_sendack ;need to send ACK ?
+         jump    done_ack    ;no, skip this section
+
+         pushregs regf0      ;temp save REG0
+         sendk   rsp_ack     ;send the ACK byte
+         popregs regf0       ;restore REG0
+
+done_ack unbank              ;done with ACK response byte
+;
+;   Jump to the dispatch routine indicated by the table entry.  Register
+;   usage:
+;
+;     REG0  -  Original opcode.
+;
+;     REG1  -  0-N table entry offset for the opcode.
+;
+;     REG3:REG2  -  Low two bytes of the command routine start address
+;       minus the dispatch table start address.  The high byte is assumed
+;       to be 0.  In other words, the command routines must all follow the
+;       table but start no more than 65534 addresses past the start of the
+;       table.
+;
+         movlw   low tbl_cmd
+         addwf   reg2        ;make command routine address byte 0
+         movlw   high tbl_cmd
+         addwfc  reg3, w     ;make command routine address byte 1
+         movwf   pclath
+         movlw   upper tbl_cmd
+         movwf   pclatu
+         movlw   0
+         addwfc  pclatu      ;make command routine address byte 2
+         movf    reg2, w
+         movwf   pcl         ;jump to the command routine
+
+;*******************************************************************************
+;
+;   Subroutine TBLOOKUP
+;
+;   Look up a command dispatch table entry.  REG1 contains the 0-N
+;   table entry number.  The value found in the selected table entry
+;   is returned in REG3,REG2.
+;
+         locsub  tblookup, noregs
+
+         clrf    reg3        ;make table entry address offset in REG3,REG2
+         bcf     status, c
+         rlcf    reg1, w
+         movwf   reg2
+         rlcf    reg3
+
+         movlw   low tbl_cmd ;set entry address byte 0
+         addwf   reg2, w
+         dbankif tblptrl
+         movwf   tblptrl
+
+         movlw   high tbl_cmd ;set entry address byte 1
+         addwfc  reg3, w
+         dbankif tblptrh
+         movwf   tblptrh
+
+         movlw   upper tbl_cmd ;set entry address byte 2
+         dbankif tblptru
+         movwf   tblptru
+         movlw   0
+         addwfc  tblptru
+
+         tblrd*+             ;read low byte of table entry, advance to high byte
+         movff   tablat, reg2
+         tblrd*+             ;read high byte
+         movff   tablat, reg3
+
+         leaverest
+
+;*******************************************************************************
+;
+;   Commands jump table.
+;
+;   There is one table entry for each valid opcode.  The first table
+;   entry is for the opcode 0.  Each entry is one program memory word
+;   (2 bytes) and contains the address of the command routine for that
+;   opcode minus the table start address.  Only the low 16 bits of the
+;   24 bit signed number are stored in the table entry.  The upper bits
+;   including the sign are assumed to be zero, so all dispatch routines
+;   must be after the table and no more than 65534 address units from the
+;   start of the table.  The special table entry value of 0 indicates
+;   that no such command exists.
+;
+;**********
+;
+;   Macro TBLENT opc, name
+;
+;   Define a table entry for an implemented command.  OPC is the 0-255
+;   opcode for the command, and NAME is the command name.  The symbol
+;   CM0<name> will be defined for each implemented table entry, and
+;   the command routine address is assumed to be CM_1<name>.
+;
+;   TBLENT must be invoked for each implemented opcode in ascending opcode
+;   order.
+;
+
+;   Initialize assembly state before the first TBLENT invocation.
+;
+next_opc set     0           ;next table entry will be for this opcode
+;
+;   Definition of TBLENT macro.
+;
+tblent   macro   opc, name
+         local   ii
+
+  if opc < next_opc
+         error   TBLENT invocation for opcode #v(opc) not in ascending order.
+    endif
+
+ii       set     0
+cm#v(ii)name equ opc
+
+  while next_opc < opc       ;insert blank entries until reach this opcode
+         data    0
+next_opc set     next_opc + 1
+    endw
+
+ii       set     1
+         data    cm_#v(ii)name - tbl_cmd ;create the table entry
+next_opc set     next_opc + 1 ;update opcode for next table entry
+         endm
+;
+;**********
+;
+;   Indicate the list of implemented commands in this firmware.
+;
+tbl_cmd                      ;jump table for top level commands
+         tblent  1, nop      ;no operation, but responds with ACK
+         tblent  2, off      ;power down the target chip, drive Vdd and Vpp to 0V
+;        tblent  3, pins     ;get info about number of pins
+         tblent  4, send1    ;send up to 8 data bits to the target
+         tblent  5, send2    ;send up to 16 data bits to the targer
+         tblent  6, recv1    ;receive up to 8 data bits from the target
+         tblent  7, recv2    ;receive up to 16 data bits from the target
+         tblent  8, clkh     ;set PGC high
+         tblent  9, clkl     ;set PGC low
+         tblent  10, dath    ;set PGD high
+         tblent  11, datl    ;set PGD low
+         tblent  12, datr    ;read the data line from the target
+         tblent  13, tdrive  ;test whether target is driving the data line
+         tblent  14, wait    ;force deliberate wait, int16u timer ticks
+         tblent  15, fwinfo  ;returns info about this firmware
+;        tblent  16, vddvals ;set voltages for Vdd low, normal, and high levels
+;        tblent  17, vddlow  ;enable Vdd to its low level
+         tblent  18, vddnorm ;enable Vdd to its normal level
+;        tblent  19, vddhigh ;enable Vdd to its high level
+         tblent  20, vddoff  ;drive Vdd to 0V
+         tblent  21, vppon   ;turn on Vpp
+         tblent  22, vppoff  ;drive Vpp to 0V
+         tblent  23, idreset ;select reset algorithm
+         tblent  24, reset   ;reset target, power up in programming mode
+         tblent  25, idwrite ;select write algorithm
+         tblent  26, idread  ;select read algorithm
+;        tblent  27, test1   ;debug, 0 parameters
+         tblent  28, adr     ;set address for next target operation
+         tblent  29, read    ;read one word from target
+         tblent  30, write   ;write one word to the target
+         tblent  31, tprog   ;set programming write time, int8u in units of 200uS
+         tblent  32, spprog  ;select program memory space
+         tblent  33, spdata  ;select data (EEPROM) memory space
+         tblent  34, incadr  ;increment target address by 1
+         tblent  35, adrinv  ;invalidate any target address assumption
+         tblent  36, pan18   ;write to 18F panel of 8 bytes
+         tblent  37, rbyte8  ;read 8 bytes from the target
+         tblent  38, writing ;indicate target chip is being written to
+         tblent  39, fwinfo2 ;returns additional info about this firmware
+         tblent  40, resadr  ;indicate address after reset
+         tblent  41, chkcmd  ;indicates whether a particular command is implemented
+;        tblent  42, getpwr  ;get internal programmer control processor voltage
+         tblent  43, getvdd  ;return measured Vdd in millivolts
+;        tblent  44, getvpp  ;return measured Vpp in millivolts
+         tblent  45, waitchk ;wait and return resulting completion status
+;        tblent  46, getbutt ;get number of button presses since startup
+;        tblent  47, appled  ;set display of APP LED
+         tblent  48, run     ;supply Vdd and allow target chip to run
+         tblent  49, highz   ;set all target lines to high impedence
+;        tblent  50, ntout   ;disable host command stream timeout
+         tblent  51, getcap  ;return info about a particular capability
+         tblent  52, send3   ;send up to 24 data bits to the targer
+         tblent  53, send4   ;send up to 32 data bits to the targer
+         tblent  54, recv3   ;receive up to 24 data bits from the target
+         tblent  55, recv4   ;receive up to 32 data bits from the target
+         tblent  56, w30pgm  ;write 4 program memory words to dsPIC target
+;        tblent  57, test2   ;debug, 1 parameter, 4 response bytes
+         tblent  58, r30pgm  ;read 2 program memory words from dsPIC target
+         tblent  59, datadr  ;set data EEPROM starting address
+         tblent  60, write8  ;write 8 data bytes to the target
+;        tblent  61, vpp     ;set level for Vpp on, intu8 0-20V range
+         tblent  62, wbufen  ;indicate last address covered by the write buffer
+         tblent  63, wbufsz  ;indicate size of target chip write buffer
+         tblent  64, gettick ;get clock tick period in units of 100nS
+;        tblent  65, vdd     ;set the Vdd voltage for when enabled
+         tblent  66, nameset ;set user-assigned name of this unit
+         tblent  67, nameget ;return the user-assigned name of this unit
+         tblent  68, reboot  ;reboot this processor
+         tblent  69, read64  ;read 64 addresses, start adr must 64-aligned
+;        tblent  70, vpphiz  ;set Vpp to high impedence
+         tblent  71, testget ;get ID of current test mode
+         tblent  72, testset ;set the test mode
+         tblent  73, eecon1  ;indicate EECON1 register address in target
+         tblent  74, eeadr   ;indicate EEADR register address in target
+         tblent  75, eeadrh  ;indicate EEADRH register address in target
+         tblent  76, eedata  ;indicate EEDATA register address in target
+         tblent  77, visi    ;indicate VISI register address in target
+         tblent  78, tblpag  ;indicate TBLPAG register address in target
+         tblent  79, nvmcon  ;indicate NVMCON register address in target
+         tblent  80, nvmkey  ;indicate NVMKEY register address in target
+         tblent  81, nvmadr  ;indicate NVMADR register address in target
+         tblent  82, nvmadru ;indicate NVMADRU register address in target
+         tblent  83, tprogf  ;fast ticks to wait for programming operation
+         tblent  84, ftickf  ;gets fast ticks clock frequency
+
+tbl_cmd_n equ    next_opc    ;number of last implemented table entry
+
+;*******************************************************************************
+;
+;   Command routines.  These are implemented in an include file.  Only those
+;   command routines listed in the table above must be included in the build.
+;   This allows a generic set of command routines to be maintained with
+;   individual firmware builds only including dispatch table entries for the
+;   relevant commands.
+;
+;   The source code for each command routine must only be enabled if the
+;   CM0<name> symbol for that command exists.  Furthermore, each command
+;   must start with the COMMAND macro.  When done, each command routine
+;   should jump to CMD_DONE.  For example, the source code for command XXX
+;   would look like this:
+;
+;     ifdef cm0xxx
+;          command xxx
+;          ...
+;          goto  cmd_done
+;       endif
+;
+;**********
+;
+;   Macro COMMAND name
+;
+;   Start the code for implementing the command NAME.  This will automatically
+;   create the entry point and init the bank setting and other state appropriately.
+;
+command  macro   name
+         local   ii
+
+ii       set     1
+cm_#v(ii)name unbank         ;define command entry point
+         endm
+
+;**********
+;
+;   Include the generic source code for all the command routines.
+;
+/include "picprg_cmd.ins.aspic"
+
+;*******************************************************************************
+;
+;   Command TEST1
+;
+;   This command has no defined function, and is not used in normal
+;   operation.  It is for doing one-off tests.
+;
+  ifdef cm0test1
+         command test1
+
+         goto    cmd_done    ;done processing this command
+    endif
+
+;*******************************************************************************
+;
+;   Command TESTGET
+;
+;   Returns the current test mode setting.
+;
+  ifdef cm0testget
+         command testget
+
+         prom_acquire        ;acquire lock on the EEPROM
+         gcall   opmode_get  ;get the operating mode into REG0
+         sendbyte            ;send it
+         prom_release        ;release access to the EEPROM
+
+         goto    cmd_done    ;done processing this command
+    endif
+
+;*******************************************************************************
+;
+;   Command TESTSET mode
+;
+;   Set the test mode (operating mode) to MODE.  The new mode is saved,
+;   but will not take effect until the next restart.
+;
+  ifdef cm0testset
+         command testset
+
+         getbyte             ;get the new mode into REG0
+         prom_acquire        ;acquire lock on the EEPROM
+         gcall   opmode_set  ;set the operating mode
+         prom_release        ;release access to the EEPROM
+
+         goto    cmd_done    ;done processing this command
+    endif
+
+;*******************************************************************************
+;
+;   Command GETCAP capID dat
+;
+;   Return information about a selected programmer capability.
+;
+  ifdef cm0getcap
+         command getcap
+         getbyte             ;get capability ID
+         movff   reg0, reg1
+         getbyte             ;get capability parameter byte
+
+         movf    reg1, w     ;get the capability ID
+         sublw   captbl_n-1  ;compare to max valid ID
+         jmp_wgt getcap_default ;unrecognized capability ID, return default ?
+
+         movlw   upper captbl
+         movwf   pclatu      ;init table entry address byte 2
+         clrf    pclath      ;make table entry address offset in PCLATH:REG1
+         bcf     status, c
+         rlcf    reg1
+         rlcf    pclath
+         rlcf    reg1
+         rlcf    pclath
+         movlw   low captbl
+         addwf   reg1        ;make table entry address byte 0
+         movlw   high captbl
+         addwfc  pclath      ;set jump address byte 1
+         movlw   0
+         addwfc  pclatu      ;set jump address byte 2
+         movf    reg1, w
+         movwf   pcl         ;jump to table entry for this GETCAP ID
+;
+;   GETCAP ID jump table.  REG0 contains the data on entry to each target
+;   routine.
+;
+captbl                       ;jump table for capability IDs
+         goto    getcap_varvdd ;0, variable Vdd
+         goto    getcap_reset ;1, reset algorithm types
+         goto    getcap_write ;2, write algorithm types
+         goto    getcap_read ;3, read algorithm types
+         goto    getcap_vpp  ;4, variable Vpp
+captbl_n equ     ($ - captbl) / 4 ;number of entries in the table
+;
+;   GETCAP variable Vdd, subcommand is in REG0.
+;
+getcap_varvdd unbank
+         movlw   low captbl_varvdd
+         movwf   reg1
+         movlw   high captbl_varvdd
+         movwf   reg2
+         movlw   upper captbl_varvdd
+         jump    gclookup
+;
+;   GETCAP Reset ID, REG0 = ID
+;
+getcap_reset unbank
+         movlw   low captbl_reset
+         movwf   reg1
+         movlw   high captbl_reset
+         movwf   reg2
+         movlw   upper captbl_reset
+         jump    gclookup
+;
+;   GETCAP Write ID, REG0 = ID
+;
+getcap_write unbank
+         movlw   low captbl_write
+         movwf   reg1
+         movlw   high captbl_write
+         movwf   reg2
+         movlw   upper captbl_write
+         jump    gclookup
+;
+;   GETCAP Read ID, REG0 = ID
+;
+getcap_read unbank
+         movlw   low captbl_read
+         movwf   reg1
+         movlw   high captbl_read
+         movwf   reg2
+         movlw   upper captbl_read
+         jump    gclookup
+;
+;   GETCAP Variable Vpp
+;
+getcap_vpp unbank
+         movlw   low captbl_vpp
+         movwf   reg1
+         movlw   high captbl_vpp
+         movwf   reg2
+         movlw   upper captbl_vpp
+         jump    gclookup
+;
+;   Various GETCAP return points, depending on what is being returned
+;   and what the return value is.
+;
+getcap_default unbank        ;return default answer, which is always 0
+         movlw   0
+getcap_havew unbank          ;return code is in W
+         movwf   reg0
+getcap_haveret unbank        ;return code is in REG0
+         sendbyte            ;send response indicating default configuration
+         goto    cmd_done    ;done processing this command
+
+;**********
+;
+;   Look up in a table to get the returned byte value.  REG0 contains
+;   the table entry to look up, and W:REG2:REG1 the table start
+;   address.  The table must of the format described below.
+;
+gclookup unbank
+         movwf   tblptru     ;point to the start of the table
+         movff   reg2, tblptrh
+         movff   reg1, tblptrl
+         tblrd*+             ;get last supported table index into TABLAT
+         movf    reg0, w     ;get the actual index
+         subwf   tablat      ;compare to max index for this table
+         skip_wle            ;index is within this table ?
+         jump    getcap_default ;no, return the default indication
+         addwf   tblptrl     ;make address of the selected table entry
+         movlw   0
+         addwfc  tblptrh
+         addwfc  tblptru
+         tblrd*              ;get the table entry into TABLAT
+         movff   tablat, reg0 ;get the return code into REG0
+         jump    getcap_haveret ;return the value in REG0
+
+;**********
+;
+;   Various capability tables.  Each defines the value to return for
+;   a particular data byte.  The first table entry indicates the maximum
+;   data byte value supported by the table.  The table entries from the
+;   second to the last correspond to sequential data byte values starting
+;   with 0.  All non-existent table entries are treated as if they
+;   existed and had a value of zero.  Each table must have at least the
+;   table length entry and the entry for 0.
+;
+.gctabs  code_pack           ;GETCAP tables are packed bytes
+;
+;   Responses to variable Vdd inquiry.  Each table entry supplies the value for
+;   a particular subcommand.
+;
+captbl_varvdd
+         db      captbl_varvdd_end - captbl_varvdd - 2
+         db      1           ;0 - variable Vdd is not implemented
+         db      140         ;1 - fixed Vdd is 3.3V (0-6.0V scale)
+captbl_varvdd_end
+;
+;   List of implemented reset IDs.  IDs 0-3 are implemented by default,
+;   so these have a value of 0 for implemented and 1 for not.  IDs 4
+;   and higher have a value of 1 for implemented and 0 for not.
+;
+captbl_reset
+         db      captbl_reset_end - captbl_reset - 2
+         db      0           ;0 - no action
+         db      0           ;1 - Vpp before Vdd
+         db      0           ;2 - Vdd before Vpp
+         db      0           ;3 - Vdd before Vdd, address unknown
+         db      1           ;4 - dsPIC
+         db      0           ;5 - Vdd quickly before Vpp
+         db      1           ;6 - special unlock sequence of 18FJ parts
+         db      1           ;7 - special unlock sequence for 24H and 33F parts
+         db      1           ;8 - for 24F parts
+         db      1           ;9 - for 16F182x parts using unlock key sequence
+         db      1           ;10 - for 14FJ parts
+         db      1           ;11 - for 18FxxK80 high voltage program mode entry
+         db      1           ;12 - for 24E and 33E parts
+captbl_reset_end
+;
+;   List of implemented read IDs.  IDs 0-3 are implemented by default,
+;   so these have a value of 0 for implemented and 1 for not.  IDs 4
+;   and higher have a value of 1 for implemented and 0 for not.
+;
+captbl_read
+         db      captbl_read_end - captbl_read - 2
+         db      0           ;0 - no action
+         db      0           ;1 - 16Fxxx
+         db      0           ;2 - 18F, program space only
+         db      0           ;3 - 12 bit core
+         db      1           ;4 - dsPIC
+         db      1           ;5 - 18F, program and data space
+         db      1           ;6 - enhanced (4 digit) 16F
+captbl_read_end
+;
+;   List of implemented write IDs.  IDs 0-3 are implemented by default,
+;   so these have a value of 0 for implemented and 1 for not.  IDs 4
+;   and higher have a value of 1 for implemented and 0 for not.
+;
+captbl_write
+         db      captbl_write_end - captbl_write - 2
+         db      0           ;0 - no action
+         db      0           ;1 - generic 16F
+         db      0           ;2 - 12F6xx
+         db      0           ;3 - 12 bit core
+         db      1           ;4 - dsPIC
+         db      1           ;5 - 16F87xA
+         db      1           ;6 - 16F716
+         db      1           ;7 - 16F688 and related
+         db      1           ;8 - 18F2520 and related
+         db      1           ;9 - 16F88, BEGIN PROG 24, END PROG 23
+         db      1           ;10 - 16F77, BEGIN PROG 8, END PROG 14
+         db      1           ;11 - 16F88x, BEGIN PROG 24, END PROG 10
+         db      1           ;12 - 16F182x, BEGIN 24 END 10, config: BEGIN 8
+captbl_write_end
+;
+;   Vpp limits.  Entry 0 is the minimum Vpp level and entry 1 the maximum
+;   this programmer can produce.  0-255 maps to 0-20V, except that the value
+;   0 indicates the default which is that the programmer has a fixed Vpp
+;   level of 13.0V.
+;
+captbl_vpp
+         db      captbl_vpp_end - captbl_vpp - 2
+         db      42          ;0 - min Vpp is 3.3V
+         db      42          ;1 - max Vpp is 3.3V
+captbl_vpp_end
+
+    endif                    ;end of GETCAP command code
+
+         end

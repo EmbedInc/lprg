@@ -1,0 +1,41 @@
+;   Running this file thru the PIC assembler preprocessor PREPIC will increment
+;   sequence number of the firmware for a subsequent build.  The ASM file that
+;   results from preprocessing this file is not used.
+;
+;   This file should be preprocessed once before each build.  The version and
+;   sequence number state is automatically read from the sequence files for
+;   this firmware in its SOURCE directory for each module.  The sequence files
+;   must therefore not be altered during a build, else different module may get
+;   built with different versions and sequence numbers.
+;
+;   The preprocessor constants FWNAME and SRCDIR must be defined in the
+;   xxxLIB.INS.ASPIC file for this project.
+;
+/include "lprglib.ins.aspic"
+;
+;   Define variables used below.
+;
+/const   lname   = [lcase fwname] ;lower case firmware name
+/var new fwver integer       ;firmware version number
+/var new fwseq integer       ;1-N sequence number for this build
+/var new fnam string         ;pathname of sequence number file
+;
+;   Get the firmware version number into FWVER.
+;
+/set fnam [str "(cog)source/" srcdir "/" lname] ;version number seq file name
+/set fwver [seq fnam 0]      ;get current firmware version number
+;
+;   Increment the sequence number by 1.
+;
+/set fnam [str "(cog)source/" srcdir "/" lname fwver] ;sequence number file name
+/set fwseq [seq fnam]        ;make new sequence number
+;
+;   Show the build info on standard output.
+;
+/show "  Building firmware " [ucase fwname] " version " fwver " sequence " fwseq
+;
+;   Do any once per build checks and messages.
+;
+/if lprg1 then
+  /show "  WARNING: building for LPRG1 board."
+  /endif

@@ -1,0 +1,308 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   Low level UART handler.
+;
+/include "lprg.ins.aspic"
+
+         extern  intr_ret_uart ;jump here when done processing an interrupt
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+baud     equ     19200       ;serial line baud rate
+finsz    equ     32          ;input FIFO size
+clkopc   equ     80          ;percent of byte clock out time for new write holdoff
+lbank    equ     0           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+         uart_baud baud      ;set asm constants for UART configuration
+byinst   equ     (freq_inst * 9) / baud_real ;instructions from start bit to TRMT set
+clkowin  equ     (byinst * clkopc) / 100 ;instructions from start to danger zone
+clkotmr  equ     65536 - clkowin + 2 ;TMR0 value to overflow at danger zone start
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  0           ;put interrupt temp variables in access bank
+uart_itmp1 res   1           ;temp scratch for use by interrupt routine
+uart_itmp2 res   1
+
+         defram  lbankadr
+         fifo_define fifo_in, finsz ;define serial line input FIFO
+
+
+.uart    code
+;
+;*******************************************************************************
+;
+;   Subroutine UART_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;
+         glbsub  uart_init, noregs
+;
+;   The UART I/O lines are initialized to outputs driven low.  Leave
+;   them this way and don't initialize the UART if serial communcation
+;   is disabled.
+;
+         dbankif gbankadr
+         btfss   flag_serial ;serial communcation is enabled ?
+         jump    ui_leave    ;no, don't initialize UART and serial I/O lines
+
+         dbankif rx_tris
+         bsf     rx_tris, rx_bit ;set RX line as input
+;
+;   Initialize the local state.
+;
+         dbankif lbankadr
+         fifo_init fifo_in   ;init input stream FIFO
+;
+;   Set up the UART hardware.
+;
+         uart_setup          ;init to config from UART_BAUD, above
+;
+;   Enable the UART interrupts.  Interrupts are still globally disabled
+;   at this point.  Only the individual peripheral interrupts are enabled
+;   here.  The UART transmit interrupt is not enabled here because the
+;   output FIFO is definitely empty now.  The interrupt will be enabled
+;   when a byte is stuffed into the output FIFO.
+;
+         dbankif pie1
+         bsf     pie1, rcie  ;enable UART receive interrupts
+;
+;   Set up timer 0 to free run from the instruction clock.  This will be
+;   used in the UART_PUT routine to time when an outgoing byte will be
+;   finished getting sent and avoid reloading TXREG during that window.
+;
+         dbankif t0con
+         movlw   b'00001000'
+                 ; 0-------  leave the timer off for now
+                 ; -0------  configure as 16 bit timer
+                 ; --0-----  clock source is instruction clock
+                 ; ---X----  increment pin edge polarity, not used
+                 ; ----1---  do not enable the prescaler
+                 ; -----XXX  prescaler divide selection
+         movwf   t0con
+
+         bcf     intcon, tmr0if ;init to not in TXREG load danger zone
+
+ui_leave unbank              ;common exit point
+         leaverest
+;
+;*******************************************************************************
+;
+;   Routine UART_INTR_RECV
+;
+;   This routine is jumped to from the interrupt handler during an interrupt
+;   when the UART has received a new byte.  This routine must jump back to
+;   INTR_RET_UART when done handling the interrupt condition.
+;
+;   Since this routine is running during an interrupt, it must not modify
+;   the general registers and other global state.  Any call stack locations
+;   used here will not be available to the foreground code.
+;
+         glbent  uart_intr_recv ;UART receive interrupt handler
+;
+;   Save the original RCSTA register value in UART_ITMP1, then save the
+;   data byte in UART_ITMP2.  The UART incoming data register must be
+;   read to clear the interrupt condition, but the framing error bit
+;   is only valid before the data byte is read.
+;
+         dbankif rcsta
+         movf    rcsta, w    ;save snapshot of receive status reg in UART_ITMP1
+         dbankif lbankadr
+         movwf   uart_itmp1
+
+         dbankif rcreg
+         movf    rcreg, w    ;save data byte in UART_ITMP2, clear intr condition
+         dbankif lbankadr
+         movwf   uart_itmp2
+;
+;   Reset the receiver if an overrun occurred.  This is the only way to
+;   clear an overrun condition.
+;
+         dbankif rcsta
+         btfss   rcsta, oerr ;input overrun condition ?
+         jump    recv_derrov ;no overrun condition
+         bcf     rcsta, cren ;disable then enable receiver to clear the error
+         bsf     rcsta, cren ;re-enable the receiver
+recv_derrov                  ;done dealing with overrun error condition
+;
+;   Ignore the data byte if it was not properly followed by the stop bit.
+;   This is called a "framing error".
+;
+         dbankif lbankadr
+         btfsc   uart_itmp1, ferr ;no framing error with this data byte ?
+         jump    intr_leave  ;framing error, don't process this byte further
+;
+;   Stuff the received byte into the FIFO if there is room for it.
+;
+         dbankif lbankadr
+         ibankif lbankadr
+         fifo_skip_nfull fifo_in, finsz ;FIFO has room for another byte ?
+         jump    intr_leave  ;FIFO is full, ignore the new byte
+         fifo_put fifo_in, finsz, uart_itmp2 ;stuff the new data byte into the FIFO
+
+         dbankif gbankadr
+         bsf     flag_sin    ;indicate a serial line input byte is available
+
+intr_leave unbank            ;common code to return to interrupt handler
+         gjump   intr_ret_uart ;done handling this interrupt
+;
+;*******************************************************************************
+;
+;   Subroutine UART_PUTIN
+;
+;   Put the byte in REG0 into the input FIFO as if it was the next
+;   received byte.  Nothing is done if the FIFO is full.
+;
+         glbsub  uart_putin, noregs
+
+         intr_off            ;temp disable interrupts to avoid FIFO contention
+         dbankif lbankadr
+         ibankif lbankadr
+         fifo_skip_nfull fifo_in, finsz ;FIFO has room for the new byte ?
+         jump    putin_full  ;no
+         fifo_put fifo_in, finsz, reg0 ;stuff the new byte into the FIFO
+         dbankif gbankadr
+         bsf     flag_sin    ;indicate an input byte is available
+putin_full unbank            ;skip to here if the FIFO is full
+         intr_on             ;re-enable interrupts
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine UART_GET
+;
+;   Return the next serial line input byte in REG0.  If no input byte is
+;   available, this routine will wait until one is.  This routine is
+;   guaranteed not to wait if FLAG_SIN is set before it is called.
+;
+         glbsub  uart_get, noregs
+;
+;   Wait until an input byte is available.
+;
+         dbankif gbankadr
+get_wait
+         btfss   flag_sin    ;an input byte is available in the FIFO ?
+         jump    get_wait    ;no input byte available yet, check again
+;
+;   The FIFO contains at least one input byte.
+;
+         dbankif lbankadr
+         ibankif lbankadr
+         intr_off            ;temp disable interrupts
+         fifo_get fifo_in, finsz, reg0 ;get the byte from the FIFO into REG0
+         fifo_skip_empty fifo_in ;no more input bytes available ?
+         jump    get_nemt    ;FIFO is not completely empty
+         dbankif gbankadr
+         bcf     flag_sin    ;indicate no input byte immediately available
+get_nemt dbank?              ;skip to here if FIFO is not completely empty
+         intr_on             ;re-enable interrupts
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine UART_PUT
+;
+;   Send the byte in REG0 over the serial line.  If the UART is not ready
+;   to accept a new byte, this routine waits until it is.
+;
+         glbsub  uart_put, noregs
+;
+;   If TXREG is currently full, then wait normally for it to become empty
+;   and write the data byte to it.  It won't be possible to load TXREG
+;   while TSR becomes empty.
+;
+
+         btfsc   pir1, txif  ;TXREG is currently full ?
+         jump    put_mpt     ;is currently empty, do special case
+         btfss   pir1, txif  ;TXREG empty now ?
+         jump    $-2         ;no, go back and check again
+         movff   reg0, txreg ;send the byte
+         jump    put_leave   ;all done
+
+put_mpt  unbank              ;TXREG is already empty
+;
+;   TXREG started out empty.  Unless TRMT is set, this means we could write to
+;   TXREG just when TSR becomes empty, which would cause an extra zero byte to
+;   be sent due to a bug in the UART.  Timer 0 was started when the last byte
+;   was written with TRMT set, and it overflows when that byte in TSR is about
+;   to get finished and TSR will try to reload from TXREG.  If timer 0 has not
+;   yet tripped, then we can safely write to TXREG.
+;
+         btfsc   txsta, trmt ;last byte still getting clocked out ?
+         jump    put_idle    ;no, UART is completely idle
+
+         intr_off            ;disable interrupts to guarantee timing
+         btfsc   intcon, tmr0if ;timer has not yet expired ?
+         jump    put_to      ;after safe time
+         movff   reg0, txreg ;write the new byte to TXREG, old still clocking out
+         intr_on             ;re-enable interrupts
+         jump    put_leave   ;all done
+
+put_to   unbank              ;byte shift out timer has expired
+         intr_on             ;re-enabled interrupts
+;
+;   Wait for TSR to be completely empty to avoid writing to TXREG just as TSR is
+;   trying to reload from TXREG.  Start the timer when writing the byte.  The
+;   timer will expire when the byte is almost sent, meaning writes to TXREG must
+;   wait until TSR is empty.
+;
+         dbankif txsta
+         btfss   txsta, trmt ;TSR is empty, UART completely idle ?
+         jump    $-2         ;no, go back and check it again
+         ;
+         ;   The UART is completely idle.
+         ;
+put_idle unbank
+         dbankif t0con
+         bcf     t0con, tmr0on ;make sure timer is off
+         dbankif tmr0h
+         movlw   high clkotmr ;load the starting value into the timer
+         movwf   tmr0h
+         dbankif tmr0l
+         movlw   low clkotmr
+         movwf   tmr0l
+         bcf     intcon, tmr0if ;init to time interval not elapsed yet
+
+         dbankif t0con
+         intr_off            ;disable interrupts for accurate timing
+         movff   reg0, txreg ;write the byte, which starts clocking out immediately
+         bsf     t0con, tmr0on ;start the timer
+         intr_on             ;re-enable interrupts
+
+put_leave unbank             ;common exit point
+         leaverest
+
+         end

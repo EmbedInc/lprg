@@ -1,0 +1,98 @@
+;   ***************************************************************
+;   * Copyright (C) 2008, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+/include "lprg.ins.aspic"
+
+         extern_flags        ;declare global flag bits EXTERN
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+;
+;*******************************************************************************
+;
+;   Global state.  All this state is assumed to be in the GBANK register
+;   bank by other modules.
+;
+         defram  gbankadr
+
+;
+;*******************************************************************************
+;
+;   Local state.
+;
+         defram  lbankadr
+
+.opmode  code
+;
+;*******************************************************************************
+;
+;   Subroutine OPMODE_INIT
+;
+;   Initialize the hardware and software state managed by this module.
+;   This routine sets the system state according to the operating mode stored
+;   in the EEPROM.  It must be called after the PROM module is initialized but
+;   before other modules whos initialization depends on the operating mode.
+;
+         glbsub  opmode_init, regf0
+
+         mcall   opmode_get  ;get the operating mode ID into REG0
+         dbankif gbankadr
+         bcf     flag_serial ;init to serial communcation is disabled
+         movf    reg0, w     ;get the operating mode
+         xorlw   255         ;compare to normal operating mode
+         skip_z              ;normal operating mode ?
+         bsf     flag_serial ;no, indicate to enable serial communication
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine OPMODE_GET
+;
+;   Get the operating mode ID into REG0.
+;
+         glbsub  opmode_get, regf1 | regf2
+
+         loadk16 reg1, ee_opmode ;set address of EEPROM location to read
+         gcall   prom_adr
+         gcall   prom_read   ;get the operating mode ID into REG0
+
+         leaverest
+;
+;*******************************************************************************
+;
+;   Subroutine OPMODE_SET
+;
+;   Set the non-volatile operating mode ID to the value in REG0.  The new
+;   mode does not take effect until the next restart.
+;
+         glbsub  opmode_set, regf1 | regf2
+
+         loadk16 reg1, ee_opmode ;set address of EEPROM location to write
+         gcall   prom_adr
+         gcall   prom_write  ;write REG0 to the address EEPROM location
+         gcall   prom_flush  ;make sure all buffered data is written
+
+         leaverest
+
+         end
