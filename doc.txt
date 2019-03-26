@@ -1,5 +1,5 @@
                       LProg PIC Programmer Firmware
-                              13 May 2018
+                              26 Mar 2019
 
 
 The LPRG firmware runs on a Microchip PIC 18F2455 in the LProg PIC
@@ -133,3 +133,14 @@ Firwmare versions
 
     Updated to use new version of common PICPRG_F16E.INS.ASPIC library
     file with minor bug fix.
+
+  LPRG 17 seq 2, 26 Mar 2019
+
+    Made build again after update to latest build script conventions, and
+    changes to the common PIC programmers firmware modules in the PPROG
+    repository.
+
+    Added 16FB module.  This is for the new PICs that use 8 bit
+    programming opcodes and 24 bit instruction words.
+
+    Untested.
