@@ -25,8 +25,8 @@
 ;
 ;   Configuration constants.
 ;
-/const   waitreset real = 5.0 ;additional mS to wait after reset
-/const   waithiz real = 50.0 ;mS to wait after setting all lines to high impedence
+/const   waitreset real = 5.0 ;additional ms to wait after reset
+/const   waithiz real = 50.0 ;ms to wait after setting all lines to high impedence
 lbank    equ     1           ;register bank for the local state of this module
 ;
 ;   Derived constants.

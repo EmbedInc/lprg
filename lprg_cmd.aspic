@@ -14,8 +14,8 @@
 ;   * its use.                                                    *
 ;   ***************************************************************
 ;
-;   Host command processor.  The routines in this module interpret and
-;   process the command stream coming from the host computer.
+;   Host command processor.  The routines in this module interpret and process
+;   the command stream coming from the host computer.
 ;
 /include "lprg.ins.aspic"
 
@@ -31,8 +31,8 @@ first_opcode equ 0           ;first valid opcode in opcodes jump table
 maxstack equ     4           ;max thread nesting supported on YIELD
 lbank    equ     1           ;register bank for the local state of this module
 ;
-;   Set MSKSAVE.  This is the bit mask of all the registers that are to
-;   be saved accross YIELD.  The remaining registers will be trashed.
+;   Set MSKSAVE.  This is the bit mask of all the registers that are to be saved
+;   accross YIELD.  The remaining registers will be trashed.
 ;
 msksave  equ     regf0 | regf1 | regf2 | regf3 | regf8
 ;
@@ -42,8 +42,8 @@ lbankadr equ     bankadr(lbank) ;address within local state register bank
 
 ;*******************************************************************************
 ;
-;   Global state.  All this state is assumed to be in the GBANK register
-;   bank by other modules.
+;   Global state.  All this state is assumed to be in the GBANK register bank by
+;   other modules.
 ;
          defram  gbankadr
 
@@ -54,8 +54,8 @@ lbankadr equ     bankadr(lbank) ;address within local state register bank
 ;
          defram  lbankadr
 ;
-;   Save area for the general registers while the thread is swapped out.
-;   The specific registers to be saved are indicated my MSKSAVE.
+;   Save area for the general registers while the thread is swapped out.  The
+;   specific registers to be saved are indicated my MSKSAVE.
 ;
 ii       set     0           ;init register number
   while ii < numregs
@@ -65,8 +65,8 @@ savereg#v(ii) res 1          ;make save area for this register
 ii       set     ii + 1      ;advance to next register number
     endw
 ;
-;   Save area for the thread-specific part of its call stack while
-;   it is swapped out.
+;   Save area for the thread-specific part of its call stack while it is swapped
+;   out.
 ;
 cmd_nstk res     1           ;1-MAXSTACK number of entries in saved stack
 cmd_stack res    maxstack * 3 ;save area for thread part of call stack
@@ -100,14 +100,13 @@ buf      res     8           ;scratch buffer, temp per command
 ;
 ;   Local subroutine YIELD
 ;
-;   Release the processor for use by other foreground tasks.  Only the
-;   registers indicated by MSKSAVE are preserved by this subroutine.
+;   Release the processor for use by other foreground tasks.  Only the registers
+;   indicated by MSKSAVE are preserved by this subroutine.
 ;
-;   The thread may be up to MAXSTACK-1 levels in subroutines below the
-;   initial thread start point.  However, nothing additional may be left
-;   on the software data stack.  Neither of these restrictions are
-;   enforced or verified, but all manner of strange behaviour can result
-;   in their violation.
+;   The thread may be up to MAXSTACK-1 levels in subroutines below the initial
+;   thread start point.  However, nothing additional may be left on the software
+;   data stack.  Neither of these restrictions are enforced or verified, but all
+;   manner of strange behaviour can result in their violation.
 ;
          locsub  yield, noregs
 ;
@@ -125,10 +124,10 @@ ii       set     ii + 1      ;advance to next register number
 ;
 ;   Save the call stack to CMD_STACK.
 ;
-;   The call stack has at least two entries right now.  The top of stack
-;   is the return address from YIELD, which is effectively the thread
-;   restart address.  The bottom stack entry is the return address from
-;   CMD_RUN, and will be used here to exit the thread.
+;   The call stack has at least two entries right now.  The top of stack is the
+;   return address from YIELD, which is effectively the thread restart address.
+;   The bottom stack entry is the return address from CMD_RUN, and will be used
+;   here to exit the thread.
 ;
 ;   Register useage:
 ;
@@ -157,11 +156,10 @@ yl_loop                      ;back here each new stack level to save
 ;
 ;   Local subroutine GET_BYTE
 ;
-;   Get the next input byte into REG0.  This subroutine will not return
-;   until an input byte is available.  Only the registers listed in MSKSAVE
-;   will be preserved.  Other tasks will be run while waiting for a new
-;   input byte to become available.  A YIELD is guaranteed to be performed
-;   at least once.
+;   Get the next input byte into REG0.  This subroutine will not return until an
+;   input byte is available.  Only the registers listed in MSKSAVE will be
+;   preserved.  Other tasks will be run while waiting for a new input byte to
+;   become available.  A YIELD is guaranteed to be performed at least once.
 ;
          locsub  get_byte, regf1
 
@@ -196,9 +194,9 @@ gb_havebyte unbank           ;the input byte is in REG0
 ;
 ;   Macro GETBYTE
 ;
-;   Call GET_BYTE, which is defined immediately above.  This macro is
-;   to make it easier to exchange code with the PRG firmware where
-;   there is no GET_BYTE call, only the GETBYTE macro.
+;   Call GET_BYTE, which is defined immediately above.  This macro is to make it
+;   easier to exchange code with the PRG firmware where there is no GET_BYTE
+;   call, only the GETBYTE macro.
 ;
 getbyte  macro
          mcalll  get_byte    ;get the next byte into REG0
@@ -242,9 +240,9 @@ pb_leave unbank              ;common exit point
 ;
 ;   Macro SENDBYTE
 ;
-;   Send the byte in REG0 as a response to the current command.  This
-;   macro provides a means to customize the code for sending a byte
-;   depending on implementation.
+;   Send the byte in REG0 as a response to the current command.  This macro
+;   provides a means to customize the code for sending a byte depending on
+;   implementation.
 ;
 sendbyte macro
          mcalll  put_byte
@@ -256,8 +254,8 @@ sendbyte macro
 ;
 ;   Send the indicated 8 bit constant value to the host.
 ;
-;   W, REG0, and the current bank setting are trashed.
-;   All registers not listed in MSKSAVE may be trashed.
+;   W, REG0, and the current bank setting are trashed.  All registers not listed
+;   in MSKSAVE may be trashed.
 ;
 sendk    macro   const
          loadk8  reg0, const
@@ -268,10 +266,10 @@ sendk    macro   const
 ;
 ;   Local subroutine WAITREADY
 ;
-;   Wait for the current wait interval, if any, to be over.  YIELD is
-;   called continually until the wait interval is over.  YIELD is not
-;   called if there is no wait interval in progress when this routine is
-;   called.  All registers not listed in MSKSAVE may be trashed.
+;   Wait for the current wait interval, if any, to be over.  YIELD is called
+;   continually until the wait interval is over.  YIELD is not called if there
+;   is no wait interval in progress when this routine is called.  All registers
+;   not listed in MSKSAVE may be trashed.
 ;
          locsub  waitready, noregs
 
@@ -287,9 +285,9 @@ wrloop   unbank
 ;
 ;   Macro WAITDONE
 ;
-;   Wait for the current wait interval, if any, to be over.  This version
-;   calls the local subroutine WAITREADY, which returns to the main event
-;   loop until the wait interval has elapsed.
+;   Wait for the current wait interval, if any, to be over.  This version calls
+;   the local subroutine WAITREADY, which returns to the main event loop until
+;   the wait interval has elapsed.
 ;
 waitdone macro
          mcalll  waitready
@@ -342,20 +340,19 @@ prom_release macro
 ;
 ;   Run the command handling thread for a short time.
 ;
-;   This subroutine is intended to be called from the main event loop.
-;   It **MUST** be called from top level code that is not nested in
-;   any subroutine.  In other words, the call stack must be empty at
-;   the time of the call.
+;   This subroutine is intended to be called from the main event loop.  It
+;   **MUST** be called from top level code that is not nested in any subroutine.
+;   In other words, the call stack must be empty at the time of the call.
 ;
 ;   WARNING: All general registers may be trashed by this subroutine.
 ;
          glbsub  cmd_run, noregs
 ;
-;   Push the contents of the saved thread stack onto the call stack
-;   to restore the thread's call context inside YIELD before it returned
-;   to the event loop.  The last (top of stack) saved address is not
-;   restored to the stack because it is the thread restart address.
-;   This will be loaded directly into the PC later to restart the thread.
+;   Push the contents of the saved thread stack onto the call stack to restore
+;   the thread's call context inside YIELD before it returned to the event loop.
+;   The last (top of stack) saved address is not restored to the stack because
+;   it is the thread restart address.  This will be loaded directly into the PC
+;   later to restart the thread.
 ;
          dbankif lbankadr
          lfsr    0, cmd_stack-1 ;init end of saved stack pointer for 0 levels
@@ -387,8 +384,8 @@ ii       set     0           ;init register number
 ii       set     ii + 1      ;advance to next register number
     endw
 ;
-;   Restart the thread right after where it called YIELD.  The restart
-;   address is at the beginning of the thread stack save area.
+;   Restart the thread right after where it called YIELD.  The restart address
+;   is at the beginning of the thread stack save area.
 ;
          dbankif lbankadr
          movf    cmd_stack+2, w ;jump to the restart address
@@ -402,10 +399,9 @@ ii       set     ii + 1      ;advance to next register number
 ;
 ;   Thread to process received commands.
 ;
-;   The main event loop calls CMD_RUN to start a time slice for this
-;   thread.  The time slice is ended when the thread calls YIELD.
-;   YIELD may be called up to MAXSTACK-1 levels in subroutines below the
-;   main thread level.
+;   The main event loop calls CMD_RUN to start a time slice for this thread.
+;   The time slice is ended when the thread calls YIELD.  YIELD may be called up
+;   to MAXSTACK-1 levels in subroutines below the main thread level.
 ;
 thread_start unbank          ;the thread will start here the first time
 
@@ -413,12 +409,12 @@ cmd_done unbank              ;done successfully processing last command
 cmd_next unbank              ;back here to interpret next byte as command opcode
 cmd_timeout unbank           ;aborts to here on input stream timeout
 ;
-;   Get the opcode of the next command.  Commands can come from the UART or
-;   from the USB.  Once the command opcode has been received from one of these
+;   Get the opcode of the next command.  Commands can come from the UART or from
+;   the USB.  Once the command opcode has been received from one of these
 ;   streams, the rest of the command must also be received from the same stream
-;   and any response data sent to that stream.  FLAG_INUSB is set according
-;   to where the opcode byte came from.  This flag is used to direct where to
-;   get subsequent bytes from and where to send response bytes to.
+;   and any response data sent to that stream.  FLAG_INUSB is set according to
+;   where the opcode byte came from.  This flag is used to direct where to get
+;   subsequent bytes from and where to send response bytes to.
 ;
          dbankif gbankadr
          bcf     flag_inusb  ;init to command is from UART
@@ -463,8 +459,8 @@ cmd_haveopc unbank           ;opcode in REG0, FLAG_INUSB set according to input
          skip_wle            ;command ID is within range ?
          jump    cmd_next    ;invalid command ID, ignore it
 ;
-;   The opcode is within range of the opcodes jump table.  The original
-;   opcode is in REG0, and the 0-N table entry number in REG1.
+;   The opcode is within range of the opcodes jump table.  The original opcode
+;   is in REG0, and the 0-N table entry number in REG1.
 ;
          mcall   tblookup    ;look up table entry REG1 into REG3,REG2
 
@@ -473,8 +469,8 @@ cmd_haveopc unbank           ;opcode in REG0, FLAG_INUSB set according to input
          skip_nz             ;table entry contains a valid address offset ?
          jump    cmd_next    ;no, ignore this command
 ;
-;   Send the ACK byte to the host if the command was received from an
-;   interface that uses protocol level flow control.
+;   Send the ACK byte to the host if the command was received from an interface
+;   that uses protocol level flow control.
 ;
          dbankif gbankadr
          btfss   flag_sendack ;need to send ACK ?
@@ -486,18 +482,16 @@ cmd_haveopc unbank           ;opcode in REG0, FLAG_INUSB set according to input
 
 done_ack unbank              ;done with ACK response byte
 ;
-;   Jump to the dispatch routine indicated by the table entry.  Register
-;   usage:
+;   Jump to the dispatch routine indicated by the table entry.  Register usage:
 ;
 ;     REG0  -  Original opcode.
 ;
 ;     REG1  -  0-N table entry offset for the opcode.
 ;
-;     REG3:REG2  -  Low two bytes of the command routine start address
-;       minus the dispatch table start address.  The high byte is assumed
-;       to be 0.  In other words, the command routines must all follow the
-;       table but start no more than 65534 addresses past the start of the
-;       table.
+;     REG3:REG2  -  Low two bytes of the command routine start address minus the
+;       dispatch table start address.  The high byte is assumed to be 0.  In
+;       other words, the command routines must all follow the table but start no
+;       more than 65534 addresses past the start of the table.
 ;
          movlw   low tbl_cmd
          addwf   reg2        ;make command routine address byte 0
@@ -515,9 +509,9 @@ done_ack unbank              ;done with ACK response byte
 ;
 ;   Subroutine TBLOOKUP
 ;
-;   Look up a command dispatch table entry.  REG1 contains the 0-N
-;   table entry number.  The value found in the selected table entry
-;   is returned in REG3,REG2.
+;   Look up a command dispatch table entry.  REG1 contains the 0-N table entry
+;   number.  The value found in the selected table entry is returned in
+;   REG3,REG2.
 ;
          locsub  tblookup, noregs
 
@@ -554,24 +548,23 @@ done_ack unbank              ;done with ACK response byte
 ;
 ;   Commands jump table.
 ;
-;   There is one table entry for each valid opcode.  The first table
-;   entry is for the opcode 0.  Each entry is one program memory word
-;   (2 bytes) and contains the address of the command routine for that
-;   opcode minus the table start address.  Only the low 16 bits of the
-;   24 bit signed number are stored in the table entry.  The upper bits
-;   including the sign are assumed to be zero, so all dispatch routines
-;   must be after the table and no more than 65534 address units from the
-;   start of the table.  The special table entry value of 0 indicates
-;   that no such command exists.
+;   There is one table entry for each valid opcode.  The first table entry is
+;   for the opcode 0.  Each entry is one program memory word (2 bytes) and
+;   contains the address of the command routine for that opcode minus the table
+;   start address.  Only the low 16 bits of the 24 bit signed number are stored
+;   in the table entry.  The upper bits including the sign are assumed to be
+;   zero, so all dispatch routines must be after the table and no more than
+;   65534 address units from the start of the table.  The special table entry
+;   value of 0 indicates that no such command exists.
 ;
 ;**********
 ;
 ;   Macro TBLENT opc, name
 ;
-;   Define a table entry for an implemented command.  OPC is the 0-255
-;   opcode for the command, and NAME is the command name.  The symbol
-;   CM0<name> will be defined for each implemented table entry, and
-;   the command routine address is assumed to be CM_1<name>.
+;   Define a table entry for an implemented command.  OPC is the 0-255 opcode
+;   for the command, and NAME is the command name.  The symbol CM0<name> will be
+;   defined for each implemented table entry, and the command routine address is
+;   assumed to be CM_1<name>.
 ;
 ;   TBLENT must be invoked for each implemented opcode in ascending opcode
 ;   order.
@@ -602,7 +595,7 @@ ii       set     1
          data    cm_#v(ii)name - tbl_cmd ;create the table entry
 next_opc set     next_opc + 1 ;update opcode for next table entry
          endm
-;
+
 ;**********
 ;
 ;   Indicate the list of implemented commands in this firmware.
@@ -692,6 +685,11 @@ tbl_cmd                      ;jump table for top level commands
          tblent  82, nvmadru ;indicate NVMADRU register address in target
          tblent  83, tprogf  ;fast ticks to wait for programming operation
          tblent  84, ftickf  ;gets fast ticks clock frequency
+;        tblent  85, sendser ;send bytes over separate serial port
+;        tblent  86, recvser ;receive bytes from separate serial port
+         tblent  87, send8m  ;send 8 bits, MSB first
+         tblent  88, send24m ;send 24 bits, MSB first
+         tblent  89, recv24m ;receive 24 bits, MSB first
 
 tbl_cmd_n equ    next_opc    ;number of last implemented table entry
 
@@ -704,10 +702,10 @@ tbl_cmd_n equ    next_opc    ;number of last implemented table entry
 ;   relevant commands.
 ;
 ;   The source code for each command routine must only be enabled if the
-;   CM0<name> symbol for that command exists.  Furthermore, each command
-;   must start with the COMMAND macro.  When done, each command routine
-;   should jump to CMD_DONE.  For example, the source code for command XXX
-;   would look like this:
+;   CM0<name> symbol for that command exists.  Furthermore, each command must
+;   start with the COMMAND macro.  When done, each command routine should jump
+;   to CMD_DONE.  For example, the source code for command XXX would look like
+;   this:
 ;
 ;     ifdef cm0xxx
 ;          command xxx
@@ -720,7 +718,8 @@ tbl_cmd_n equ    next_opc    ;number of last implemented table entry
 ;   Macro COMMAND name
 ;
 ;   Start the code for implementing the command NAME.  This will automatically
-;   create the entry point and init the bank setting and other state appropriately.
+;   create the entry point and init the bank setting and other state
+;   appropriately.
 ;
 command  macro   name
          local   ii
@@ -739,8 +738,8 @@ cm_#v(ii)name unbank         ;define command entry point
 ;
 ;   Command TEST1
 ;
-;   This command has no defined function, and is not used in normal
-;   operation.  It is for doing one-off tests.
+;   This command has no defined function, and is not used in normal operation.
+;   It is for doing one-off tests.
 ;
   ifdef cm0test1
          command test1
@@ -769,8 +768,8 @@ cm_#v(ii)name unbank         ;define command entry point
 ;
 ;   Command TESTSET mode
 ;
-;   Set the test mode (operating mode) to MODE.  The new mode is saved,
-;   but will not take effect until the next restart.
+;   Set the test mode (operating mode) to MODE.  The new mode is saved, but will
+;   not take effect until the next restart.
 ;
   ifdef cm0testset
          command testset
@@ -877,8 +876,8 @@ getcap_vpp unbank
          movlw   upper captbl_vpp
          jump    gclookup
 ;
-;   Various GETCAP return points, depending on what is being returned
-;   and what the return value is.
+;   Various GETCAP return points, depending on what is being returned and what
+;   the return value is.
 ;
 getcap_default unbank        ;return default answer, which is always 0
          movlw   0
@@ -890,9 +889,9 @@ getcap_haveret unbank        ;return code is in REG0
 
 ;**********
 ;
-;   Look up in a table to get the returned byte value.  REG0 contains
-;   the table entry to look up, and W:REG2:REG1 the table start
-;   address.  The table must of the format described below.
+;   Look up in a table to get the returned byte value.  REG0 contains the table
+;   entry to look up, and W:REG2:REG1 the table start address.  The table must
+;   of the format described below.
 ;
 gclookup unbank
          movwf   tblptru     ;point to the start of the table
@@ -913,13 +912,12 @@ gclookup unbank
 
 ;**********
 ;
-;   Various capability tables.  Each defines the value to return for
-;   a particular data byte.  The first table entry indicates the maximum
-;   data byte value supported by the table.  The table entries from the
-;   second to the last correspond to sequential data byte values starting
-;   with 0.  All non-existent table entries are treated as if they
-;   existed and had a value of zero.  Each table must have at least the
-;   table length entry and the entry for 0.
+;   Various capability tables.  Each defines the value to return for a
+;   particular data byte.  The first table entry indicates the maximum data byte
+;   value supported by the table.  The table entries from the second to the last
+;   correspond to sequential data byte values starting with 0.  All non-existent
+;   table entries are treated as if they existed and had a value of zero.  Each
+;   table must have at least the table length entry and the entry for 0.
 ;
 .gctabs  code_pack           ;GETCAP tables are packed bytes
 ;
@@ -932,9 +930,9 @@ captbl_varvdd
          db      140         ;1 - fixed Vdd is 3.3V (0-6.0V scale)
 captbl_varvdd_end
 ;
-;   List of implemented reset IDs.  IDs 0-3 are implemented by default,
-;   so these have a value of 0 for implemented and 1 for not.  IDs 4
-;   and higher have a value of 1 for implemented and 0 for not.
+;   List of implemented reset IDs.  IDs 0-3 are implemented by default, so these
+;   have a value of 0 for implemented and 1 for not.  IDs 4 and higher have a
+;   value of 1 for implemented and 0 for not.
 ;
 captbl_reset
          db      captbl_reset_end - captbl_reset - 2
@@ -953,9 +951,9 @@ captbl_reset
          db      1           ;12 - for 24E and 33E parts
 captbl_reset_end
 ;
-;   List of implemented read IDs.  IDs 0-3 are implemented by default,
-;   so these have a value of 0 for implemented and 1 for not.  IDs 4
-;   and higher have a value of 1 for implemented and 0 for not.
+;   List of implemented read IDs.  IDs 0-3 are implemented by default, so these
+;   have a value of 0 for implemented and 1 for not.  IDs 4 and higher have a
+;   value of 1 for implemented and 0 for not.
 ;
 captbl_read
          db      captbl_read_end - captbl_read - 2
@@ -966,11 +964,13 @@ captbl_read
          db      1           ;4 - dsPIC
          db      1           ;5 - 18F, program and data space
          db      1           ;6 - enhanced (4 digit) 16F
+         db      1           ;7 - new 16F with 8 bit opcodes, like 16F15313
+         db      1           ;8 - 16F183xx and related
 captbl_read_end
 ;
-;   List of implemented write IDs.  IDs 0-3 are implemented by default,
-;   so these have a value of 0 for implemented and 1 for not.  IDs 4
-;   and higher have a value of 1 for implemented and 0 for not.
+;   List of implemented write IDs.  IDs 0-3 are implemented by default, so these
+;   have a value of 0 for implemented and 1 for not.  IDs 4 and higher have a
+;   value of 1 for implemented and 0 for not.
 ;
 captbl_write
          db      captbl_write_end - captbl_write - 2
@@ -987,12 +987,14 @@ captbl_write
          db      1           ;10 - 16F77, BEGIN PROG 8, END PROG 14
          db      1           ;11 - 16F88x, BEGIN PROG 24, END PROG 10
          db      1           ;12 - 16F182x, BEGIN 24 END 10, config: BEGIN 8
+         db      1           ;13 - 8 bit programming opcodes, like 16F15313
+         db      1           ;14 - 16F183xx and related
 captbl_write_end
 ;
-;   Vpp limits.  Entry 0 is the minimum Vpp level and entry 1 the maximum
-;   this programmer can produce.  0-255 maps to 0-20V, except that the value
-;   0 indicates the default which is that the programmer has a fixed Vpp
-;   level of 13.0V.
+;   Vpp limits.  Entry 0 is the minimum Vpp level and entry 1 the maximum this
+;   programmer can produce.  0-255 maps to 0-20V, except that the value 0
+;   indicates the default which is that the programmer has a fixed Vpp level of
+;   13.0V.
 ;
 captbl_vpp
          db      captbl_vpp_end - captbl_vpp - 2
