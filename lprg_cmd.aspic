@@ -949,6 +949,7 @@ captbl_reset
          db      1           ;10 - for 14FJ parts
          db      1           ;11 - for 18FxxK80 high voltage program mode entry
          db      1           ;12 - for 24E and 33E parts
+         db      1           ;13 - Vpp low, "MCHP" signature MSB to LSB
 captbl_reset_end
 ;
 ;   List of implemented read IDs.  IDs 0-3 are implemented by default, so these
