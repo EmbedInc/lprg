@@ -1,7 +1,6 @@
                       LProg PIC Programmer Firmware
                              14 December 2021
 
-
 The LPRG firmware runs on a Microchip PIC 18F2455 in the LProg PIC
 programmer.  This programmer is designed for low cost and can only program
 the 3.3 volt PICs.
@@ -145,7 +144,7 @@ Firwmare versions
 
     Untested.
 
-  LPRG 18
+  LPRG 18 seq 10, 14 Dec 2021
 
     Added reset ID 13: Vpp low, then "MCHP" signature MSB to LSB order.
-    This supports the 16F153xx parts.
+    This supports the 16F PICs with 8 bit programming opcodes.
