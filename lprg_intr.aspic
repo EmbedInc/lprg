@@ -19,7 +19,7 @@
 /include "lprg.ins.aspic"
 
          extern_flags        ;declare global flag bits EXTERN
-;
+
 ;*******************************************************************************
 ;
 ;   Configuration constants.
@@ -29,36 +29,35 @@ intr_priorities equ false    ;disable multiple interrupt priorities
 ;   Indicate which FSRs are to be saved by the single/high and low priority
 ;   interrupt routines.
 ;
-;   FSR0 is used by the FIFO_xxx macros, and must be saved if FIFOs are
-;   accessed from interrupt code.  Note that the UART interrupt routines
-;   use FIFOs.
+;   FSR0 is used by the FIFO_xxx macros, and must be saved if FIFOs are accessed
+;   from interrupt code.  Note that the UART interrupt routines use FIFOs.
 ;
 ;   FSR1 has no dedicated purpose in the general PIC development environment.
 ;
-;   FSR2 is reserved as the software stack pointer.  This stack will be used
-;   to save state during an interrupt.  FSR2 must therefore not be explicitly
-;   saved.  It will automatically be restored if the same number of bytes
-;   are popped from the stack as are pushed to the stack.
+;   FSR2 is reserved as the software stack pointer.  This stack will be used to
+;   save state during an interrupt.  FSR2 must therefore not be explicitly
+;   saved.  It will automatically be restored if the same number of bytes are
+;   popped from the stack as are pushed to the stack.
 ;
 save_fsr0 equ    true        ;indicate whether save/restore FSR0 in sgl/high intr
 save_fsr1 equ    false       ;indicate whether save/restore FSR1 in sgl/high intr
 
 save_fsr0l equ   false       ;indicate whether save/restore FSR0 in low prio intr
 save_fsr1l equ   false       ;indicate whether save/restore FSR1 in low prio intr
-;
+
 ;**********
 ;
 ;   Derived constants.
 ;
-t2_5ms   equ     t2pms * 5   ;clock ticks per 5mS
-;
+t2_5ms   equ     t2pms * 5   ;clock ticks per 5 ms
+
 ;*******************************************************************************
 ;
 ;   Global state.
 ;
-;   The following global state is in the normal register bank for global
-;   state.  The bank is GBANK, and GBANKADR is an address guaranteed to
-;   be within this bank.
+;   The following global state is in the normal register bank for global state.
+;   The bank is GBANK, and GBANKADR is an address guaranteed to be within this
+;   bank.
 ;
          defram  gbankadr
          iregs_define        ;define registers exclusively for interrupt routines
@@ -66,59 +65,57 @@ t2_5ms   equ     t2pms * 5   ;clock ticks per 5mS
 ;   State for controlling the STATUS LED.
 ;
 ledbri   res     1           ;0-15 LED brightness for phase 1 in low nib, ph 2 in high
-ledph1   res     1           ;LED phase 1 time in 5mS units
-ledph2   res     1           ;LED phase 2 time in 5ms units
-cntled   res     1           ;5mS ticks until next LED phase
+ledph1   res     1           ;LED phase 1 time in 5 ms units
+ledph2   res     1           ;LED phase 2 time in 5 ms units
+cntled   res     1           ;5 ms ticks until next LED phase
 cntwait  res     3           ;timer 2 ticks until wait interval over
 ;
 ;   Other state.
 ;
-cn_host  res     1           ;time until display not talking to host, 10mS units
-cn_tron  res     1           ;time until display not connected to target, 10mS units
-cn_writ  res     1           ;time until display not writing to target, 10mS units
+cn_host  res     1           ;time until display not talking to host, 10 ms units
+cn_tron  res     1           ;time until display not connected to target, 10 ms units
+cn_writ  res     1           ;time until display not writing to target, 10 ms units
 
          global  ledbri, ledph1, ledph2, cntled
          global  cntwait
          global  cn_host, cn_tron, cn_writ
-;
+
 ;*******************************************************************************
 ;
-;   Local state.  This is always in the same register bank as the global
-;   state.
+;   Local state.  This is always in the same register bank as the global state.
 ;
-cnt5ms   res     1           ;timer 2 ticks until next 5mS tick
-cnt10ms  res     1           ;timer 2 ticks until next 10mS tick
+cnt5ms   res     1           ;timer 2 ticks until next 5 ms tick
+cnt10ms  res     1           ;timer 2 ticks until next 10 ms tick
 ledpwm   res     1           ;0 - 14 STATUS LED PWM slice within PWM period
 ;
-;   Define the timer 2 setup.  This timer is used for two purposes: to
-;   generate the PWM frequency, and to generate periodic interrupts that
-;   provide time base for the rest of the sofware.  The PWM hardware is
-;   used to control the target chip Vdd voltage.
+;   Define the timer 2 setup.
 ;
-;   The instruction clock is divided by the timer 2 prescaler and period
-;   register to yield the PWM period.  This is then divided by the postscaler
-;   to yield the interrupt period.  The values below are checked that they
-;   result in the timing parameters PWMINST and TICKINST defined in the
-;   project include file.  An assembly error is generated if the settings
-;   are inconsistent.
+;   Timer 2 is used to generate the base clock tick interrupt that other system
+;   timing is derived from.  The interrupt period is set by TICKINST in the
+;   project include file.
 ;
-tmr2_pre equ     1           ;timer 2 prescaler: 1, 4, or 16
-tmr2_per equ     250         ;timer 2 period in instuctions: 1 - 256
-tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
-;
-;   Verify that the PWM and clock tick frequencies specified in the include
-;   file have been met.
-;
-  if (tmr2_pre * tmr2_per) != pwminst
-         error   Not #v(pwminst) instructions per PWM period.
-    endif
-  if (tmr2_pre * tmr2_per * tmr2_pos) != tickinst
-         error   Not #v(tickinst) instructions per clock tick.
-    endif
+         tmr2cy_closeper [/ tickinst freq_inst] ;computer timer 2 setup
+
+/if [<> tmr2_cycles tickinst] then
+  /show "  Unable to configure timer 2 to " tickinst " instruction period."
+         error   TICKINST
+         end
+  /stop
+  /endif
+
+/block
+  /var local s string
+  /append s "Timer 2 PRE " tmr2_pre
+  /append s " PER " tmr2_per
+  /append s " POS " tmr2_pos
+  /append s ", " tmr2_cycles " cycles"
+  /append s ", " [eng tmr2_period 4] "s"
+  /append s ", " [eng tmr2_freq 4] "Hz"
+  /show "  " s
+  /endblock
 
 
 .intr    code
-;
 ;*******************************************************************************
 ;
 ;   Subroutine INTR_INIT
@@ -146,9 +143,9 @@ tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
 ;   Initialize local state.
 ;
          dbankif gbankadr
-         movlw   t2_5ms      ;init to maximum time until next 5mS tick
+         movlw   t2_5ms      ;init to maximum time until next 5 ms tick
          movwf   cnt5ms
-         movlw   t2pms * 10  ;init to maximum time until next 10mS tick
+         movlw   t2pms * 10  ;init to maximum time until next 10 ms tick
          movwf   cnt10ms
          clrf    ledpwm      ;init number of PWM slice within LED PWM period
 ;
@@ -157,11 +154,10 @@ tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
 ;
          timer2_setup_intr   ;config timer 2 for PWM time base and clock tick
 ;
-;   Enable interrupts.  The interrupt system was reset at startup to
-;   all interrupts disable, single interrupt priority, and all interrupt
-;   priorities set to the lowest.  Any interrupts that are needed have
-;   been individually configured, but interrupts are still globally
-;   disabled.
+;   Enable interrupts.  The interrupt system was reset at startup to all
+;   interrupts disabled, single interrupt priority, and all interrupt priorities
+;   set to the lowest.  Any interrupts that are needed have been individually
+;   configured, but interrupts are still globally disabled.
 ;
   if intr_priorities         ;using multiple priority interrupts ?
          dbankif rcon
@@ -174,21 +170,21 @@ tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
     endif
 
          leaverest
-;
+
 ;*******************************************************************************
 ;
 ;   High priority or single interrupt service routine.
 ;
-;   The processor executes a call to location 8 on an interrupt, and in
-;   addition globally disables interrupts.  These are re-enabled at the end
-;   of the ISR by the RETFIE instruction.
+;   The processor executes a call to location 8 on an interrupt, and in addition
+;   globally disables interrupts.  These are re-enabled at the end of the ISR by
+;   the RETFIE instruction.
 ;
-;   Note that subroutine calls must be minimized or avoided in the ISR.
-;   Since an interrupt can come at any time in the main code, any additional
-;   call stack locations used here are not available anywhere else.
+;   Note that subroutine calls must be minimized or avoided in the ISR.  Since
+;   an interrupt can come at any time in the main code, any additional call
+;   stack locations used here are not available anywhere else.
 ;
-;   The fast register stack is used to save/restore W, STATUS, and BSR
-;   for this interrupt.
+;   The fast register stack is used to save/restore W, STATUS, and BSR for this
+;   interrupt.
 ;
   if intr_priorities
 .intr_high code  h'8'        ;high priority interrupt vector
@@ -209,31 +205,30 @@ tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
          pushreg fsr1l
          pushreg fsr1h
     endif
-;
+
 ;*******************************************************************************
 ;*******************************************************************************
 ;
 ;   Low priority interrupt service routine.
 ;
-;   This section of code gets inserted if multiple priority interrupts
-;   are enabled.  The high priority interrupt vector is at 8, and
-;   the low priority vector at 18h.  We assume that the interrupt
-;   service routine requires more than the 8 instructions between the
-;   two vectors, so the high priority service routine must jump to a
-;   different location to avoid colliding with the low priority interrupt
-;   vector.  In that case, the high priority interrupt handler continues
-;   immediately after the low priority interrupt handler code.
+;   This section of code gets inserted if multiple priority interrupts are
+;   enabled.  The high priority interrupt vector is at 8, and the low priority
+;   vector at 18h.  We assume that the interrupt service routine requires more
+;   than the 8 instructions between the two vectors, so the high priority
+;   service routine must jump to a different location to avoid colliding with
+;   the low priority interrupt vector.  In that case, the high priority
+;   interrupt handler continues immediately after the low priority interrupt
+;   handler code.
 ;
-;   If multiple interrupt priorites are disabled, then there is nothing
-;   special about location 18h and the interrupt handler can continue
-;   right over it without harm.
+;   If multiple interrupt priorites are disabled, then there is nothing special
+;   about location 18h and the interrupt handler can continue right over it
+;   without harm.
 ;
   if intr_priorities         ;multiple interrupt priorities in use ?
          jump    intr_high_cont ;continue after low priority handler
 ;
-;   Low priority interrupt service routine.  This routine can not use
-;   the fast call stack and must save/restore W, STATUS, and BSR
-;   explicitly.
+;   Low priority interrupt service routine.  This routine can not use the fast
+;   call stack and must save/restore W, STATUS, and BSR explicitly.
 ;
 .intr_low code   h'18'       ;low priority interrupt vector
          unbank              ;indicate the bank setting is unknown
@@ -251,15 +246,14 @@ tmr2_pos equ     4           ;timer 2 postscaler: 1 - 16
          pushreg fsr1h
       endif
 ;
-;   W, STATUS, BSR, and the general FSRs (if enabled) have been saved.
-;   Now determine the interrupt condition and service it.
+;   W, STATUS, BSR, and the general FSRs (if enabled) have been saved.  Now
+;   determine the interrupt condition and service it.
 ;
 
          reset               ;unexpected interrupt, should never happen
 ;
-;   Done servicing the low priority interrupt condition.  Now restore
-;   to the state at the start of the interrupt and return from the
-;   interrupt.
+;   Done servicing the low priority interrupt condition.  Now restore to the
+;   state at the start of the interrupt and return from the interrupt.
 ;
 intr_retl unbank             ;common low priority interrupt exit point
 
@@ -290,8 +284,8 @@ intr_high_cont unbank
 ;
 ;   The high or single interrupt priority routine continues here.
 ;
-;   W, STATUS, BSR, and the general FSRs (if enabled) have been saved.
-;   Now determine the interrupt condition and service it.
+;   W, STATUS, BSR, and the general FSRs (if enabled) have been saved.  Now
+;   determine the interrupt condition and service it.
 ;
 
 ;
@@ -319,12 +313,12 @@ no_adintr dbankis pir1
          btfsc   pir1, tmr2if
          jump    tmr2_intr
 
-         gjump   0           ;unexpected interrupt, should never happen
-;
+         reset               ;unexpected interrupt, should never happen
+
 ;****************************************
 ;
-;   Timer 2 interrupt.  This interrupt indicates a low level clock tick,
-;   which happen every TICKINST instruction cycles or T2PMS times per millisecond.
+;   Timer 2 interrupt.  This interrupt indicates a low level clock tick, which
+;   happen every TICKINST instruction cycles or T2PMS times per millisecond.
 ;
 tmr2_intr dbankis pir1
          bcf     pir1, tmr2if ;clear the interrupt condition
@@ -335,10 +329,10 @@ tmr2_intr dbankis pir1
          dbankif adcon0
          bsf     adcon0, go  ;start a new A/D conversion
 ;
-;   Check for the wait interval is over.  CNTWAIT is the number of timer
-;   2 interrupts before the wait interval is over.  There is no wait interval
-;   in progress when CNTWAIT is zero.  Otherwise, FLAG_DONE is set when
-;   the wait interval expires.
+;   Check for the wait interval is over.  CNTWAIT is the number of timer 2
+;   interrupts before the wait interval is over.  There is no wait interval in
+;   progress when CNTWAIT is zero.  Otherwise, FLAG_DONE is set when the wait
+;   interval expires.
 ;
          dbankif gbankadr
          movf    cntwait+0, w ;merge the counter bytes into W
@@ -362,39 +356,37 @@ done_wait
 ;
 ;   Update the STATUS LED display state.
 ;
-;   The LED is controlled by the global state LEDBRI,
-;   LEDPH1, and LEDPH2.  The LED display has two "phases", each lasting
-;   LEDPH1 and LEDPH2 units of 5mS respectively.  LEDBRI defines the
-;   LED brightness during the phases.  The low nibble is the brightness
-;   for phase 1 and the high nibble for phase 2.  Each brightness value
-;   is a number ranging from fully off (0) to fully on (15).  The
-;   brightness is varied via software PWM with a PWM time slice every
-;   timer 2 interrupt.  There are therefore 15 PWM time slices in a PWM
-;   period.  FLAG_LEDPH1 indicates currently in phase 1, otherwise
-;   in phase 2.
+;   The LED is controlled by the global state LEDBRI, LEDPH1, and LEDPH2.  The
+;   LED display has two "phases", each lasting LEDPH1 and LEDPH2 units of 5 ms
+;   respectively.  LEDBRI defines the LED brightness during the phases.  The low
+;   nibble is the brightness for phase 1 and the high nibble for phase 2.  Each
+;   brightness value is a number ranging from fully off (0) to fully on (15).
+;   The brightness is varied via software PWM with a PWM time slice every timer
+;   2 interrupt.  There are therefore 15 PWM time slices in a PWM period.
+;   FLAG_LEDPH1 indicates currently in phase 1, otherwise in phase 2.
 ;
          dbankif gbankadr
-         decfsz  cnt5ms      ;count down until 5mS tick
-         jump    done_5ms    ;no 5mS tick this time
+         decfsz  cnt5ms      ;count down until 5 ms tick
+         jump    done_5ms    ;no 5 ms tick this time
          ;
-         ;   A 5mS tick just occurred.
+         ;   A 5 ms tick just occurred.
          ;
-         movlw   t2_5ms      ;reset number of timer 2 ticks until next 5mS tick
+         movlw   t2_5ms      ;reset number of timer 2 ticks until next 5 ms tick
          movwf   cnt5ms
          decfsz  cntled      ;count down until end of current LED phase
          jump    done_ledphase ;LED display phase doesn't end this time
          ;
-         ;   The current LED display phase has just ended.  Toggle to the
-         ;   other phase.
+         ;   The current LED display phase has just ended.  Toggle to the other
+         ;   phase.
          ;
          btg     flag_ledph1 ;toggle to the other LED phase
          movf    ledph1, w   ;get length of LED phase 1
          btfss   flag_ledph1 ;really in phase 1 now ?
          movf    ledph2, w   ;no, get length of LED phase 2
-         movwf   cntled      ;reset counter for 5mS ticks to end of new phase
+         movwf   cntled      ;reset counter for 5 ms ticks to end of new phase
 done_ledphase                ;skip here if not changing phases this time
 
-done_5ms                     ;skip here on no 5mS tick this time
+done_5ms                     ;skip here on no 5 ms tick this time
 ;
 ;   Update the LED PWM output.
 ;
@@ -424,16 +416,15 @@ led_on
          set_led_on          ;set the LED to ON
 done_led                     ;done setting LED for this new PWM slice
 ;
-;   Generate the various clock ticks and perform operations required by
-;   them.
+;   Generate the various clock ticks and perform operations required by them.
 ;
          dbankif gbankadr
-         decfsz  cnt10ms     ;count down to next 10mS tick
-         jump    done_ticks  ;not time for 10mS tick right now
+         decfsz  cnt10ms     ;count down to next 10 ms tick
+         jump    done_ticks  ;not time for 10 ms tick right now
          movlw   t2pms * 10
          movwf   cnt10ms     ;reset tick counter for next tick
 ;
-;   10mS tick.
+;   10 ms tick.
 ;
          dbankif gbankadr
          movf    cn_host     ;set Z if host comm timer zero
@@ -451,18 +442,17 @@ done_led                     ;done setting LED for this new PWM slice
          decf    cn_writ     ;count one less tick until expired
 
 done_ticks dbankis gbankadr  ;all done handling the various clock ticks
-;
+
 ;****************************************
 ;
-;   Done servicing the high priority interrupt condition.  Now restore
-;   to the state at the start of the interrupt and return from the
-;   interrupt.  W, STATUS, and BSR have been saved on the hardware fast
-;   register stack and will be restored as part of the RETFIE FAST
-;   instruction.
+;   Done servicing the high priority or single interrupt.  Now restore to the
+;   state at the start of the interrupt and return from the interrupt.  W,
+;   STATUS, and BSR have been saved on the hardware fast register stack and will
+;   be restored as part of the RETFIE FAST instruction.
 ;
 intr_ret unbank              ;common high/single priority interrupt exit point
          glbent  intr_ret_uart ;UART interrupt routines return here when done
-         glbent  intr_ret_ad ;A/D interrupt routine returns here when done
+         glbent  intr_ret_ad ;A/D interrupt routine returns to here when done
 
   if save_fsr1               ;need to restore FSR1 ?
          popreg  fsr1h
@@ -474,6 +464,6 @@ intr_ret unbank              ;common high/single priority interrupt exit point
          popreg  fsr0l
     endif
 
-         retfie  fast        ;return from high/only priority interrupt
+         retfie  fast        ;return from interrupt, restore W, STATUS, and BSR
 
          end

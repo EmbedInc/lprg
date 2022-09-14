@@ -39,7 +39,6 @@ info_info equ    0           ;private 32 bit information about this firmware
 ;
 ;   Application configuration parameters
 ;
-/const   pwminst integer = 250 ;instruction cycles in PWM period
 /const   tickinst integer = 1000 ;instruction cycles per base clock tick
 /const   reset_slow bool = false ;use slower reset, non-standard hardware workaround
 gbankadr equ     0           ;adr within globals bank (access bank on PIC18)
@@ -65,12 +64,9 @@ tsksave  set     tsksave | regf7
 /include "lprg_usb.ins.aspic" ;global definitions required by USB subsystem
 
 tickinst equ     [v tickinst] ;instruction cycles per base clock tick
-/const   tickus  real = [* 1e6 [/ tickinst [/ freq_osc 4]]] ;uS per base clock tick
-tickus   equ     [v [rnd tickus]] ;uS base clock tick period
-tick100ns equ    [rnd [* tickus 10]] ;clock tick period in units of 100nS
-pwminst  equ     [v pwminst] ;instruction cycles in PWM periods
-/const   pwmmax  integer = [* pwminst 4] ;10 bit PWM value for 100% duty cycle
-pwmmax   equ     [v pwmmax]  ;10 bit PWM value for 100% duty cycle
+/const   tickus  real = [* 1e6 [/ tickinst [/ freq_osc 4]]] ;us per base clock tick
+tickus   equ     [v [rnd tickus]] ;us base clock tick period
+tick100ns equ    [rnd [* tickus 10]] ;clock tick period in units of 100 ns
 to_host  equ     (to_hostms + 5) / 10 ;host comm indicator time, 10 ms units
 to_tron  equ     (to_tronms + 5) / 10 ;target on indicator time, 10 ms units
 to_writ  equ     (to_writms + 5) / 10 ;write indicator time, 10 ms units
@@ -113,8 +109,6 @@ rsp_ack  equ     1           ;last command acknowledged, clear to send next
 ;
 ;   See the PREPIC documentation file for details of the /FLAG directive.
 ;
-/flag    pwm1                ;reload PWM 1 value next tick
-/flag    pwm2                ;reload PWM 2 value next tick
 /flag    vddon               ;Vdd is being driven by the programmer
 /flag    vppon               ;Vpp is being driven by the programmer
 

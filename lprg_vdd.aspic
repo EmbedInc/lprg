@@ -189,9 +189,8 @@ vzero_leave unbank           ;skip to here if Vdd already set this way
          set_vdddrain_off    ;make sure the low side driver is off
          set_vddon_on        ;turn on the high side driver
          dbankif gbankadr
-         bsf     flag_vddon  ;indicate Vdd drive to target is off
+         bsf     flag_vddon  ;indicate Vdd drive to target is on
          startwait wvddon    ;start time interval until next operation allowed
-         loadk16 reg0, 3300  ;set wait for mV to reach, within tolerance.
 
 von_leave unbank             ;skip to here if Vdd already set this way
          leaverest
