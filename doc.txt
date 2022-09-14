@@ -1,5 +1,5 @@
                       LProg PIC Programmer Firmware
-                            10 September 2022
+                            14 September 2022
 
 The LPRG firmware runs on a Microchip PIC 18F2455 in the LProg PIC
 programmer.  This programmer is designed for low cost and can only program
@@ -153,7 +153,14 @@ Firwmare versions
 
     Updated to reset tables bug fixed in common code.
 
-  LPRG 20
+  LPRG 20 20 seq 8, 14 Sep 2022
 
     Updated to new USB library code structure, which now requires using
     USB_SETUP.INS.ASPIC.
+
+    Uses new facilities in the USB code to detect and recover from wedged
+    USB hardware.  If the USB hardware is found wedges, it is reset, then
+    a wait for 1 second performed, then the processor is reset.
+
+    Cleaned up comments in interrupt routine.  Removed mention of hardware
+    PWM, which is not used by this firmware.

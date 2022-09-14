@@ -69,6 +69,7 @@ ledph1   res     1           ;LED phase 1 time in 5 ms units
 ledph2   res     1           ;LED phase 2 time in 5 ms units
 cntled   res     1           ;5 ms ticks until next LED phase
 cntwait  res     3           ;timer 2 ticks until wait interval over
+tick10ms res     1           ;10 ms clock tick counter
 ;
 ;   Other state.
 ;
@@ -77,7 +78,7 @@ cn_tron  res     1           ;time until display not connected to target, 10 ms 
 cn_writ  res     1           ;time until display not writing to target, 10 ms units
 
          global  ledbri, ledph1, ledph2, cntled
-         global  cntwait
+         global  cntwait, tick10ms
          global  cn_host, cn_tron, cn_writ
 
 ;*******************************************************************************
@@ -136,6 +137,7 @@ ledpwm   res     1           ;0 - 14 STATUS LED PWM slice within PWM period
          clrf    cntwait+1
          clrf    cntwait+2
          bsf     flag_done   ;init to not in a wait interval
+         clrf    tick10ms    ;init 10 ms clock ticks counter
          clrf    cn_host     ;init the various timeouts to elapsed
          clrf    cn_tron
          clrf    cn_writ
@@ -426,6 +428,9 @@ done_led                     ;done setting LED for this new PWM slice
 ;
 ;   10 ms tick.
 ;
+         dbankif gbankadr
+         incf    tick10ms    ;update 10 ms clock ticks counter
+
          dbankif gbankadr
          movf    cn_host     ;set Z if host comm timer zero
          skip_z              ;already zero, nothing to do ?
