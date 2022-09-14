@@ -153,7 +153,7 @@ Firwmare versions
 
     Updated to reset tables bug fixed in common code.
 
-  LPRG 20 20 seq 8, 14 Sep 2022
+  LPRG 20 seq 8, 14 Sep 2022
 
     Updated to new USB library code structure, which now requires using
     USB_SETUP.INS.ASPIC.
