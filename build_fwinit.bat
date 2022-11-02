@@ -28,6 +28,7 @@ call src_get_ins_aspic %srcdir% pprog picprg_f16
 call src_get_ins_aspic %srcdir% pprog picprg_f16b
 call src_get_ins_aspic %srcdir% pprog picprg_f16e
 call src_get_ins_aspic %srcdir% pprog picprg_f18
+call src_get_ins_aspic %srcdir% pprog picprg_f18b
 call src_get_ins_aspic %srcdir% pprog picprg_f30
 call src_get_ins_aspic %srcdir% pprog picprg_name
 call src_get_ins_aspic %srcdir% pprog picprg_op

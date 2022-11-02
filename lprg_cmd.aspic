@@ -912,12 +912,14 @@ gclookup unbank
 
 ;**********
 ;
-;   Various capability tables.  Each defines the value to return for a
-;   particular data byte.  The first table entry indicates the maximum data byte
-;   value supported by the table.  The table entries from the second to the last
-;   correspond to sequential data byte values starting with 0.  All non-existent
-;   table entries are treated as if they existed and had a value of zero.  Each
-;   table must have at least the table length entry and the entry for 0.
+;   Various capability tables.
+;
+;   Each table defines the value to return for a particular data byte.  The
+;   first table entry indicates the maximum  data byte value supported by the
+;   table.  The table entries from the second to the last correspond to
+;   sequential data byte values starting with 0.  All non-existent table entries
+;   are treated as if they existed and had a value of zero.  Each table must
+;   have at least the table length entry and the entry for 0.
 ;
 .gctabs  code_pack           ;GETCAP tables are packed bytes
 ;
@@ -967,6 +969,7 @@ captbl_read
          db      1           ;6 - enhanced (4 digit) 16F
          db      1           ;7 - new 16F with 8 bit opcodes, like 16F15313
          db      1           ;8 - 16F183xx and related
+         db      1           ;9 - PIC 18 with 8 bit opcodes, like 18F25Q10
 captbl_read_end
 ;
 ;   List of implemented write IDs.  IDs 0-3 are implemented by default, so these
@@ -990,6 +993,7 @@ captbl_write
          db      1           ;12 - 16F182x, BEGIN 24 END 10, config: BEGIN 8
          db      1           ;13 - 8 bit programming opcodes, like 16F15313
          db      1           ;14 - 16F183xx and related
+         db      1           ;15 - PIC 18 with 8 bit opcodes, like 18F25Q10
 captbl_write_end
 ;
 ;   Vpp limits.  Entry 0 is the minimum Vpp level and entry 1 the maximum this

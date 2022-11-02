@@ -1,0 +1,36 @@
+;   ***************************************************************
+;   * Copyright (C) 2011, Embed Inc (http://www.embedinc.com)     *
+;   *                                                             *
+;   * Permission to copy this file is granted as long as this     *
+;   * copyright notice is included in its entirety at the         *
+;   * beginning of the file, whether the file is copied in whole  *
+;   * or in part and regardless of whether other information is   *
+;   * added to the copy.                                          *
+;   *                                                             *
+;   * The contents of this file may be used in any way,           *
+;   * commercial or otherwise.  This file is provided "as is",    *
+;   * and Embed Inc makes no claims of suitability for a          *
+;   * particular purpose nor assumes any liability resulting from *
+;   * its use.                                                    *
+;   ***************************************************************
+;
+;   This module contains generic routines for handling the 18F target devices
+;   that use 8 bit opcodes and 24 bit data words during programming.  The
+;   programming interface is very different from the original PIC 16 and 18.
+;   For example, the 18F25Q10 is one of the parts supported by this module.
+;
+/include "lprg.ins.aspic"
+;
+;*******************************************************************************
+;
+;   Configuration constants.
+;
+lbank    equ     1           ;register bank for the local state of this module
+;
+;   Derived constants.
+;
+lbankadr equ     bankadr(lbank) ;address within local state register bank
+
+/include "picprg_f18b.ins.aspic"
+
+         end

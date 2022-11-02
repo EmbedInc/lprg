@@ -6,6 +6,7 @@ lprg_f16.o
 lprg_f16b.o
 lprg_f16e.o
 lprg_f18.o
+lprg_f18b.o
 lprg_f30.o
 lprg_init.o
 lprg_intr.o

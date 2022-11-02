@@ -13,6 +13,7 @@ call src_aspic %srcdir% %fwname%_f16
 call src_aspic %srcdir% %fwname%_f16b
 call src_aspic %srcdir% %fwname%_f16e
 call src_aspic %srcdir% %fwname%_f18
+call src_aspic %srcdir% %fwname%_f18b
 call src_aspic %srcdir% %fwname%_f30
 call src_aspic %srcdir% %fwname%_init
 call src_aspic %srcdir% %fwname%_intr
