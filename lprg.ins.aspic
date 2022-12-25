@@ -20,12 +20,6 @@
 ;   LProg PIC programmer.  The control processor is a Microchip PIC
 ;   18F2455.
 ;
-;   Debug switches.  These must all be FALSE for production builds.
-;
-/const   debug_icd bool = false ;build for debugging with ICD, RealIce, etc
-/const   debug   bool = false ;build for any kind of debugging
-/const   lprg1   bool = false ;build for LPRG1 board, not LPRG2
-;
 /include "lprglib.ins.aspic"
 ;
 ;   General firmware information reported by VERS command.
@@ -159,12 +153,7 @@ rsp_ack  equ     1           ;last command acknowledged, clear to send next
 /outbit  cpgd    portb 7     ;PGD for this processor
 
 /outbit  pgdd    portc 0     ;weak PGD drive, disable during normal operation
-/if lprg1
-  /then
-    /outbit led portc 2 n    ;low turns on LED on LPRG1 board
-  /else
-    /outbit led portc 2      ;high turns on LED on LPRG2 board
-  /endif
+/outbit  led     portc 2     ;turns on LED
 /outbit  tx      portc 6     ;UART output
 /outbit  rx      portc 7     ;UART input, init to unused output pin
 
