@@ -16,9 +16,32 @@
 ;
 ;   Include file for the LPRG PIC application.
 ;
-;   This firmware runs on the main control processor of an Embed Inc
-;   LProg PIC programmer.  The control processor is a Microchip PIC
-;   18F2455.
+;   This firmware runs on the main control processor of an Embed Inc LProg PIC
+;   programmer.
+;
+;   This firmware can be built for several different processors.  The processor
+;   is selected by the PICNAME environment variable, set in the BUILD_VARS.BAT
+;   file.  The preprocessor constant "picname" is the upper case contents of the
+;   PICNAME environment variable.  Preprocessor code in the STRT module verifies
+;   that PICNAME is set to one of the supported processors.
+;
+;   The following processors are supported:
+;
+;     18LF2455
+;
+;       This was the original processor, used in units up to serial number 1999.
+;
+;     18F25K50
+;
+;       Intended target processor starting at serial number 2000.
+;
+;     18F24K50
+;
+;       Temporary processor for firmware development when the 18F25K50 was not
+;       available.  This processor is identical to th e'25K50 except that it has
+;       only 8192 program memory instruction locations, whereas the '25K50 has
+;       16384.  Version 21 uses about 7600 instruction locations, so 8192 is too
+;       tight for production units.
 ;
 /include "lprglib.ins.aspic"
 ;
@@ -36,9 +59,9 @@ info_info equ    0           ;private 32 bit information about this firmware
 /const   tickinst integer = 1000 ;instruction cycles per base clock tick
 /const   reset_slow bool = false ;use slower reset, non-standard hardware workaround
 gbankadr equ     0           ;adr within globals bank (access bank on PIC18)
-to_hostms equ    250         ;10-2500 mS indicate host communication after receive
-to_tronms equ    250         ;10-2500 mS indicate target on since last on
-to_writms equ    250         ;10-2500 mS indicate writing since last write
+to_hostms equ    250         ;10-2500 ms indicate host communication after receive
+to_tronms equ    250         ;10-2500 ms indicate target on since last on
+to_writms equ    250         ;10-2500 ms indicate writing since last write
 namemaxlen equ   80          ;max allowed name string length in EEPROM
 
 tsksave  set     0           ;build the mask of registers for TASK_YIELD to save
@@ -69,8 +92,8 @@ t2pms    equ     freq_inst / (tickinst * 1000) ;base clock ticks per millisecond
          error   Not integer clock ticks per millisecond
     endif
 ;
-;   EEPROM allocation.  Each of the EE_xxx symbols is the offset of a particular piece
-;   of non-volatile state from the beginning of the EEPROM.
+;   EEPROM allocation.  Each of the EE_xxx symbols is the offset of a particular
+;   piece of non-volatile state from the beginning of the EEPROM.
 ;
   cblock 0
          ee_namelen: 1       ;number of characters in user-settable name string
@@ -78,27 +101,26 @@ t2pms    equ     freq_inst / (tickinst * 1000) ;base clock ticks per millisecond
          ee_opmode: 1        ;0 = serial comm mode, 255 = normal operation
     endc
 ;
-;   Response byte values.  Responses are sent to the host over the serial
-;   line.  Some of these may be sent asynchronously, and not really
-;   in response to anything sent by the host.
+;   Response byte values.  Responses are sent to the host over the serial line.
+;   Some of these may be sent asynchronously, and not really in response to
+;   anything sent by the host.
 ;
-;   Multi-byte numeric parameters following response codes are sent in
-;   least to most significant byte order.
+;   Multi-byte numeric parameters following response codes are sent in least to
+;   most significant byte order.
 ;
 rsp_ack  equ     1           ;last command acknowledged, clear to send next
 ;
 ;**********
 ;
 ;   Global flag bits.  As many GFL0 thru GFLn variables as needed are
-;   automatically created by the /FLAG preprocessor directive.  After all
-;   flags are defined, NFLAGB will be left indicating the number of GFLx
-;   variables created.  For each flag, the following assembler symbols
-;   will be defined:
+;   automatically created by the /FLAG preprocessor directive.  After all flags
+;   are defined, NFLAGB will be left indicating the number of GFLx variables
+;   created.  For each flag, the following assembler symbols will be defined:
 ;
 ;     flag_<name>_regn  -  0-N GFLn variable number containing the flag
 ;     flag_<name>_bit   -  0-7 flag bit number within its GFLn variable
-;     flag_<name>       -  string substitution macro gfl<n>,<bit>.  This
-;                          symbol can be used directly with bit manupulation
+;     flag_<name>       -  string substitution macro gfl<n>,<bit>.  This symbol
+;                          can be used directly with bit manupulation
 ;                          instructions.
 ;
 ;   See the PREPIC documentation file for details of the /FLAG directive.
@@ -121,27 +143,14 @@ rsp_ack  equ     1           ;last command acknowledged, clear to send next
 ;
 ;**********
 ;
-;   I/O pin declarations.  /INBIT and /OUTBIT are preprocessor
-;   directives.  Each one defines a single I/O pin.  See the PREPIC
-;   documentation file for details.  Briefly, the directives are:
+;   I/O pin declarations.
 ;
-;     /INBIT <name> <port> <bit> [pup]
-;     /OUTBIT <name> <port> <bit> [<initial value>]
-;
-;   The following assembler symbols will be defined for each /INBIT
-;   and /OUTBIT:
-;
-;     <name>_reg  -  Address of port register containing the bit.
-;     <name>_tris -  Address of TRIS register for the port.
-;     <name>_bit  -  0-7 bit number withing the port.
-;     <name>_pin  -  String substitution macro for the port register
-;                    and the I/O bit number.  This symbol can be used
-;                    directly with bit manipulation instructions.
-;
-;   The ports are initialized in the PORT module according to the I/O
-;   bit definitions here.
-;
-/inbit   vvdd    porta 0     ;target Vdd voltage input
+/inana   vvdd    porta 0 an0 ;target Vdd voltage input
+/outbit  ra1     porta 1     ;unused
+/outbit  ra2     porta 2     ;unused
+/outbit  ra3     porta 3     ;unused
+/outbit  ra4     porta 4     ;unused
+/outbit  ra5     porta 5     ;unused
 
 /outbit  tpgd    portb 0     ;target PGD drive and read line
 /outbit  tpgc    portb 1     ;target PGC output drive

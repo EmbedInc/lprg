@@ -4,6 +4,10 @@ rem   Set up the environment for building firmware from this source directory.
 rem
 call build_vars
 
+cd /d "%sourcedir%
+slink pic.pdf /datash/pic/%pictype%.pdf
+slink %fwname%.linkpic (cog)source/pic/p%pictype%.linkpic
+
 rem   Get assembler "library" include files.  These are left in the SRC/PIC
 rem   directory.
 rem

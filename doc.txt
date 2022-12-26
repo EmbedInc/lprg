@@ -1,9 +1,25 @@
                       LProg PIC Programmer Firmware
-                            25 December 2022
+                            26 December 2022
 
-The LPRG firmware runs on a Microchip PIC 18F2455 in the LProg PIC
-programmer.  This programmer is designed for low cost and can only program
-the 3.3 volt PICs.
+The LPRG firmware controls the LProg PIC programmer.  This programmer is
+designed for low cost and can only program the 3.3 volt PICs.
+
+The firmware can target the following PICs:
+
+  18LF2455
+
+    This was the original PIC in LProgs up to serial number 1999.
+    Firmware versions 21 and earlier were only targeted to this PIC.
+
+  18F25K50
+
+    PIC for new builds starting at serial number 2000.
+
+  18F24K50
+
+    For testing when the 18F25K50 is not available.  This is the same as
+    the '25K50 except that it has half the program memory.  At version 22,
+    the program memory is 91% full.
 
 
 Firwmare versions
@@ -12,7 +28,7 @@ Firwmare versions
 
     Clone of EUSB version 20 firmware, which is the controlling firmware
     of a USBProg PIC programmer.  The PIC type was changed from 18F2550 to
-    18F2455, the processor clock speed from 48MHz to 16MHz, and the
+    18LF2455, the processor clock speed from 48MHz to 16MHz, and the
     firmware ID changed to the ID for a LProg.  Works on USBProg hardware.
     Changes have not been made yet for the different I/O connections of
     the LProg hardware.
@@ -170,7 +186,14 @@ Firwmare versions
     Added read ID 9 and write ID 15.  These support PIC 18 with 8 bit
     programming commands.
 
-  LPRG 22
+  LPRG 22 seq 46, 26 Dec 2022
 
     Removed support for LPRG1 board.  Removed hard-coded debug switches.
     Debug switches are now set with the DEBUG environment variable.
+
+    Added support for different PICs, selected with PICTYPE environment
+    variable in BUILD_VARS script.  Now supports 18LF2455, 18F24K50, and
+    18F25K50.  Previous code could only target the 18LF2455.  The intent
+    is to go forwards with 18F25K50.
+
+    Built for 18F24K50.  Seems to work.

@@ -36,6 +36,7 @@
     /else                    ;FWTYPE does not exist
       /set s [str s "Firmware type ID not defined"]
     /endif
+  /append s ", built for PIC " picname
   /show "  " s
   /set s ""
   /set s [str "Fosc = " [eng freq_osc oscdig] "Hz"]
@@ -52,6 +53,12 @@
 ;   Set static processor configuration bits.
 ;
 .config  code_pack
+/pick one by picname
+
+/option "18LF2455"
+  //
+  //   Primary oscillator is external 8 MHz crystal.
+  //
          db      b'11110001' ;config 1L
                  ; XX------  unused
                  ; --1-----  USB clock is 96 MHz PLL / 2 = 48 MHz
@@ -116,42 +123,131 @@
                  ; X-XXXXXX  unused
                  ; -1------  disable boot block table read protection
 
+/option "18F24K50" "18F25K50"
+  //
+  //   Primary oscillator is external 12 MHz crystal.
+  //
+         db      b'11100110' ;CONFIG1L
+                 ; XX------  unused
+                 ; --X-----  div select for low speed USB, unused
+                 ; ---00---  divide clock by 1
+                 ; -----X--  unused
+                 ; ------1-  PLL clock multiplier enabled
+                 ; -------0  PLL multiplies by 4, not 3
+
+         db      b'00110010' ;CONFIG1H
+                 ; 0-------  oscillator switchover mode off
+                 ; -0------  failsafe clock monitoring off
+                 ; --1-----  primary clock always on
+                 ; ---X----  unused
+                 ; ----0010  HS crystal oscillator mode
+
+         db      b'11100110' ;CONFIG2L
+                 ; X-------  unused
+                 ; -1------  low-power brownout reset disabled
+                 ; --X-----  unused
+                 ; ---00---  select brownout reset level of 2.85 V
+                 ; -----11-  brownout reset on, not FW controlled
+                 ; -------0  powerup timer on
+
+         db      b'11111100' ;CONFIG2H
+                 ; XX------  unused
+                 ; --1111--  maximum WDT postscaler, 32768
+                 ; ------00  WDT off
+
+         db      b'11111111' ;CONFIG3L, unused
+
+         db      b'11111111' ;CONFIG3H
+                 ; 1-------  MCLR/RA3 is MCLR
+                 ; -X------  SDO output select, unused
+                 ; --X-----  unused
+                 ; ---X----  T3CKI input select, unused
+                 ; ----XX--  unused
+                 ; ------0-  RB0-RB4 reset to digital, not analog
+                 ; -------1  CCP2 on RC1, not RB3
+
+         db      b'10011111' ;CONFIG4L
+                 ; 1-------  disable background debugger
+                 ; -0------  enhanced instruction set off
+                 ; --0-----  ICD function on RB6/RB7
+                 ; ---XX---  unused
+                 ; -----1--  low voltage programming enabled
+                 ; ------X-  unused
+                 ; -------1  stack overflow/underflow causes reset
+
+         db      b'11111111' ;CONFIG4H, unused
+
+         db      b'11111111' ;CONFIG5L
+                 ; XXXX----  unused
+                 ; ----1111  code protection off
+
+         db      b'11111111' ;CONFIG5H
+                 ; 1-------  EEPROM code protection off
+                 ; -1------  boot block code protection off
+                 ; --XXXXXX  unused
+
+         db      b'11111111' ;CONFIG6L
+                 ; XXXX----  unused
+                 ; ----1111  write protection off
+
+         db      b'11011111' ;CONFIG6H
+                 ; 1-------  EEPROM write protection off
+                 ; -1------  boot block write protection off
+                 ; --0-----  config bits write protection on
+                 ; ---XXXXX  unused
+
+         db      b'11111111' ;CONFIG7L
+                 ; XXXX----  unused
+                 ; ----1111  table read protection off
+
+         db      b'11111111' ;CONFIG7H
+                 ; X-------  unused
+                 ; -1------  boot block table read protection off
+                 ; --XXXXXX  unused
+
+/optionelse
+  /show "  PIC " picname " is not a supported type."
+         error   PIC Type
+         end
+  /stop
+  /endpick
+
 ;*******************************************************************************
 ;
 ;   Global state.
 ;
          defram  gbankadr
 ;
-;   Declare global flag bytes GFL0 - GFLn.  The assembly constant
-;   NFLAGB is set to the number of these flag bytes by the /FLAG
-;   preprocessor directives in LPRG.INS.ASPIC.
+;   Declare global flag bytes GFL0 - GFLn.  The assembly constant NFLAGB is set
+;   to the number of these flag bytes by the /FLAG preprocessor directives in
+;   LPRG.INS.ASPIC.
 ;
          flags_define        ;define the variables for the global flag bits
-;
+
 ;*******************************************************************************
 ;
 ;   Executable code.
 ;
 ;   Reset vector.
 ;
-.reset   code    0
-         clrf    intcon      ;disable all interrupts
+.reset   code    0           ;execution starts here after reset or power up
+         clrf    intcon      ;make sure all interrupts are disabled
          gjump   start       ;jump to relocatable startup code
 ;
 ;   Relocatable code.
 ;
-;   This code only initializes the individual modules.  The remaining
-;   system initialization is done in the LPRG_INIT module, which jumps
-;   to MAIN when done.
+;   This code only initializes the individual modules.  The remaining system
+;   initialization is done in the LPRG_INIT module, which jumps to MAIN when
+;   done.
 ;
 .strt    code
 start    unbank
 ;
-;   Set the oscillator calibration value if this processor has one and
-;   we are using the internal oscillator.  The constant OSC_CAL_CALL
-;   is defined in the processor configuration section if the internal
-;   oscillator is being used and the factory calibration value is
-;   stored in a RETLW instruction at a particular address.
+;   Set the oscillator calibration value if this processor has one and we are
+;   using the internal oscillator.  The constant OSC_CAL_CALL is defined in the
+;   processor configuration section if the internal oscillator is being used and
+;   the factory calibration value is stored in a RETLW instruction at a
+;   particular address.
 ;
   ifdef osc_cal_call         ;internal oscillator being used, get value via RETLW
          setpage osc_cal_call ;set up for calling the specific address
@@ -225,8 +321,8 @@ start    unbank
          bcf     rcon, ipen
     endif
 ;
-;   Initialize the global flag bits that are declared with /FLAG
-;   directives in the main include file.
+;   Initialize the global flag bits that are declared with /FLAG directives in
+;   the main include file.
 ;
          flags_clear         ;initialize all global flag bits to 0
 ;
@@ -253,8 +349,8 @@ start    unbank
 
          gcallnr intr_init   ;init interrupt management and enable interrupts
 ;
-;   All the individual modules have been initialized.  Now start up the
-;   overall system.
+;   All the individual modules have been initialized.  Now start up the overall
+;   system.
 ;
          gjump   init        ;go to system initialization module
 

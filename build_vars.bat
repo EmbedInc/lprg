@@ -6,6 +6,7 @@ set srcdir=picprg
 set buildname=lprg
 call treename_var "(cog)source/picprg/lprg" sourcedir
 set fwname=lprg
-set pictype=18F2455
+rem set pictype=18LF2455
+set pictype=18F24K50
 set picclass=PIC
-set t_parms=
+set t_parms=-vdd 3.3
